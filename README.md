@@ -175,8 +175,32 @@ yarn dev:backend     # Start FastAPI backend
 │   ├── package.json         # Next.js dependencies
 │   └── tailwind.config.js   # Tailwind configuration
 │
-└── package.json             # Monorepo root configuration
+├── node_modules/            # Root shared dependencies (see below)
+├── package.json             # Monorepo root configuration
+├── package-lock.json        # Dependency lock file
+└── yarn.lock               # Yarn workspace lock file
 ```
+
+### 📦 Dependency Management & node_modules Structure
+
+This project uses **Yarn Workspaces** for monorepo dependency management:
+
+**Root node_modules contains:**
+- **Shared dependencies**: `concurrently` for running multiple services
+- **Common packages**: `socket.io-client` used by frontend
+- **Hoisted dependencies**: Yarn automatically moves common dependencies to root to avoid duplication
+
+**Why root node_modules exists:**
+- **Workspace management**: Root level manages monorepo orchestration scripts
+- **Dependency optimization**: Shared packages are hoisted to root to save disk space
+- **Script execution**: Root scripts like `yarn dev` use `concurrently` from root node_modules
+
+**Apps using root dependencies:**
+- **Frontend workspace**: Uses `socket.io-client` for WebSocket connections
+- **WebSocket server workspace**: May share common Node.js dependencies
+- **Monorepo scripts**: Use `concurrently` to run multiple services simultaneously
+
+Individual workspaces (frontend/, websocket-server/) have their own specific dependencies in their respective node_modules directories.
 
 ## 🌟 Key Features Explained
 
