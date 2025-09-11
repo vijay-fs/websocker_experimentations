@@ -1,0 +1,22 @@
+{
+  "name": "websocket-tutorial-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "websocket-server"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:websocket\" \"npm run dev:backend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:websocket": "cd websocket-server && npm run dev",
+    "dev:backend": "cd backend && uv run uvicorn main:app --reload --port 8000",
+    "install:all": "yarn install && cd backend && uv sync"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.1"
+  }
+}
