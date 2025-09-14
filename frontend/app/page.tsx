@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSocket } from '@/hooks/useSocket';
 
 interface BatchStatus {
@@ -24,37 +24,141 @@ export default function Home() {
   const [checkBatchId, setCheckBatchId] = useState<string>('');
   const [manualBatchStatus, setManualBatchStatus] = useState<BatchStatus | null>(null);
   
-  const { isConnected, subscribeToProcess, unsubscribeFromProcess, batchProgressMap, error } = useSocket();
+ const { 
+    isConnected, 
+    subscribeToProcess, 
+    unsubscribeFromProcess, 
+    batchProgressMap, 
+    activeSubscriptions,
+    error 
+  } = useSocket();
+
+ // Restore active processes from localStorage on page load
+  useEffect(() => {
+    const savedBatchIds = localStorage.getItem('activeBatchIds');
+    if (savedBatchIds) {
+      try {
+        const batchIds = JSON.parse(savedBatchIds);
+        if (Array.isArray(batchIds) && batchIds.length > 0) {
+          batchIds.forEach(batchId => {
+            // Fetch current status for each batch regardless of connection status
+            // This ensures processes are displayed immediately after refresh
+            fetch(`http://localhost:8000/api/batch-status/${batchId}`)
+              .then(response => {
+                if (response.ok) {
+                  return response.json();
+                }
+                throw new Error('Batch not found');
+              })
+              .then(data => {
+                // Update the process state immediately to show in UI
+                setActiveProcesses(prev => {
+                  const newMap = new Map(prev);
+                  newMap.set(batchId, {
+                    batchId: data.batch_id,
+                    status: data,
+                    isActive: data.progress < 100
+                  });
+                  return newMap;
+                });
+                
+                // Subscribe to the batch if it's still active AND we're connected
+                if (data.progress < 100 && isConnected) {
+                  // Small delay to ensure WebSocket is ready
+                  setTimeout(() => {
+                    subscribeToProcess(batchId);
+                  }, 100);
+                }
+              })
+              .catch(error => {
+                console.error(`Error fetching status for batch ${batchId}:`, error);
+                // Remove invalid batch IDs from localStorage
+                const updatedBatchIds = batchIds.filter((id: string) => id !== batchId);
+                localStorage.setItem('activeBatchIds', JSON.stringify(updatedBatchIds));
+              });
+          });
+        }
+      } catch (error) {
+        console.error('Error parsing saved batch IDs:', error);
+      }
+    }
+  }, []); // Empty dependency array to run only once on mount
+
+ // Handle WebSocket connection becoming available after mount
+  useEffect(() => {
+    if (isConnected) {
+      // Resubscribe to all active processes when connection becomes available
+      Array.from(activeProcesses.values()).forEach(process => {
+        if (process.isActive && !activeSubscriptions.has(process.batchId)) {
+          // Small delay to ensure WebSocket is ready
+          setTimeout(() => {
+            subscribeToProcess(process.batchId);
+          }, 100);
+        }
+      });
+    }
+  }, [isConnected, activeProcesses, activeSubscriptions, subscribeToProcess]);
+
+ // Save all batch IDs to localStorage (both active and completed)
+  // Only active subscriptions are saved to activeSubscriptions
+  useEffect(() => {
+    // Get all batch IDs from current processes
+    const allBatchIds = Array.from(activeProcesses.values()).map(p => p.batchId);
+    if (allBatchIds.length > 0) {
+      localStorage.setItem('activeBatchIds', JSON.stringify(allBatchIds));
+    }
+  }, [activeProcesses]);
+
+ // Create a ref to track the last processed batch progress to prevent unnecessary updates
+  const lastBatchProgressRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
+    let hasUpdates = false;
+    const newMap = new Map(activeProcesses);
+    
     batchProgressMap.forEach((progress, batchId) => {
-      setActiveProcesses(prev => {
-        const newMap = new Map(prev);
-        const existing = newMap.get(batchId);
-        
-        const updatedStatus: BatchStatus = {
-          batch_id: batchId,
-          status: progress.progress === 100 ? 'completed' : 'running',
-          progress: progress.progress,
-          messages: existing?.status.messages ? 
-            [...existing.status.messages, progress.message] : 
-            [progress.message],
-          created_at: existing?.status.created_at || new Date().toISOString(),
-          updated_at: progress.timestamp
-        };
-        
-        newMap.set(batchId, {
-          batchId,
-          status: updatedStatus,
-          isActive: progress.progress < 100
-        });
-        
-        return newMap;
+      // Create a unique key for this progress update
+      const progressKey = `${batchId}-${progress.timestamp}-${progress.progress}`;
+      const lastProgressKey = lastBatchProgressRef.current.get(batchId);
+      
+      // Skip if we've already processed this exact progress update
+      if (lastProgressKey === progressKey) {
+        return;
+      }
+      
+      hasUpdates = true;
+      lastBatchProgressRef.current.set(batchId, progressKey);
+      
+      const existing = newMap.get(batchId);
+      
+      const updatedStatus: BatchStatus = {
+        batch_id: batchId,
+        status: progress.progress === 100 ? 'completed' : 'running',
+        progress: progress.progress,
+        messages: existing?.status.messages ? 
+          [...existing.status.messages, progress.message] : 
+          [progress.message],
+        created_at: existing?.status.created_at || new Date().toISOString(),
+        updated_at: progress.timestamp
+      };
+      
+      newMap.set(batchId, {
+        batchId,
+        status: updatedStatus,
+        isActive: progress.progress < 100
       });
     });
-  }, [batchProgressMap]);
+    
+    // Only update state if there were actual changes
+    if (hasUpdates) {
+      setActiveProcesses(newMap);
+    }
+  }, [batchProgressMap, activeProcesses]);
 
-  const startProcess = async () => {
+ // Keep all batch IDs in localStorage for visibility, but update active subscriptions
+  // The activeSubscriptions useEffect will handle saving only active batch IDs
+
+ const startProcess = async () => {
     try {
       const response = await fetch('http://localhost:8000/api/start-process', {
         method: 'POST',
@@ -74,24 +178,29 @@ export default function Home() {
       const data = await response.json();
       
       // Initialize the process in our state
+      const initialStatus: BatchStatus = {
+        batch_id: data.batch_id,
+        status: 'initialized',
+        progress: 0,
+        messages: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
       setActiveProcesses(prev => {
         const newMap = new Map(prev);
         newMap.set(data.batch_id, {
           batchId: data.batch_id,
-          status: {
-            batch_id: data.batch_id,
-            status: 'initialized',
-            progress: 0,
-            messages: [],
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          },
+          status: initialStatus,
           isActive: true
         });
         return newMap;
       });
       
-      subscribeToProcess(data.batch_id);
+      // Small delay to ensure WebSocket is ready before subscribing
+      setTimeout(() => {
+        subscribeToProcess(data.batch_id);
+      }, 100);
     } catch (error) {
       console.error('Error starting process:', error);
     }

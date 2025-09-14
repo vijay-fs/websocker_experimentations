@@ -32,7 +32,20 @@ const connectedClients = new Map<string, Set<string>>();
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
+ // Store the last time a client subscribed to a batch to prevent spam
+  const subscriptionTimestamps = new Map<string, number>();
+
   socket.on('subscribe_to_batch', (batchId: string) => {
+    const key = `${socket.id}:${batchId}`;
+    const now = Date.now();
+    const lastSubscribe = subscriptionTimestamps.get(key) || 0;
+    
+    // Prevent spam subscriptions (less than 100ms apart)
+    if (now - lastSubscribe < 100) {
+      return;
+    }
+    
+    subscriptionTimestamps.set(key, now);
     console.log(`Client ${socket.id} subscribed to batch ${batchId}`);
     
     socket.join(`batch_${batchId}`);
@@ -70,8 +83,8 @@ io.on('connection', (socket) => {
     console.log(`Broadcast completed for batch ${data.batch_id}`);
   });
 
-  socket.on('disconnect', () => {
-    console.log(`Client disconnected: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    console.log(`Client disconnected: ${socket.id}, reason: ${reason}`);
     
     connectedClients.forEach((clients, batchId) => {
       if (clients.has(socket.id)) {
@@ -81,6 +94,11 @@ io.on('connection', (socket) => {
         }
       }
     });
+  });
+
+  // Handle errors
+  socket.on('error', (error) => {
+    console.error(`Socket error for client ${socket.id}:`, error);
   });
 });
 

@@ -19,7 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-batch_status: Dict[str, Dict[str, Any]] = {}
+# In-memory storage
+batch_status_memory: Dict[str, Dict[str, Any]] = {}
 
 SOCKETIO_SERVER_URL = "http://localhost:8001"
 sio = socketio.AsyncClient()
@@ -36,6 +37,19 @@ class BatchStatusResponse(BaseModel):
     created_at: str
     updated_at: str
     error: Optional[str] = None
+
+def get_batch_status(batch_id: str) -> Optional[Dict[str, Any]]:
+    """Get batch status from in-memory storage"""
+    return batch_status_memory.get(batch_id)
+
+def set_batch_status(batch_id: str, status_data: Dict[str, Any]) -> bool:
+    """Save batch status to in-memory storage"""
+    batch_status_memory[batch_id] = status_data
+    return True
+
+def get_all_batch_ids() -> list:
+    """Get all batch IDs from in-memory storage"""
+    return list(batch_status_memory.keys())
 
 async def send_to_socketio(batch_id: str, message: str, progress: int):
     try:
@@ -56,8 +70,9 @@ async def send_to_socketio(batch_id: str, message: str, progress: int):
         print(f"Successfully sent batch update for {batch_id}")
     except Exception as e:
         print(f"Failed to send to Socket.IO server: {e}")
-        import traceback
-        traceback.print_exc()
+        # Don't print full traceback in production, but it's helpful for debugging
+        # import traceback
+        # traceback.print_exc()
 
 async def simulate_long_process(batch_id: str):
     messages = [
@@ -72,25 +87,42 @@ async def simulate_long_process(batch_id: str):
         "Process completed!"
     ]
     
-    batch_status[batch_id]["status"] = "running"
+    # Get current batch status from in-memory storage
+    batch_data = get_batch_status(batch_id)
+    if not batch_data:
+        print(f"Batch {batch_id} not found in memory")
+        return
+    
+    batch_data["status"] = "running"
+    set_batch_status(batch_id, batch_data)
     
     for i, message in enumerate(messages):
         progress = int((i + 1) / len(messages) * 100)
-        batch_status[batch_id]["messages"].append(message)
-        batch_status[batch_id]["progress"] = progress
-        batch_status[batch_id]["updated_at"] = datetime.now().isoformat()
+        batch_data["messages"].append(message)
+        batch_data["progress"] = progress
+        batch_data["updated_at"] = datetime.now().isoformat()
+        
+        # Save updated status to in-memory storage
+        set_batch_status(batch_id, batch_data)
         
         await send_to_socketio(batch_id, message, progress)
         
+        # Check if the process was cancelled or completed
+        updated_batch_data = get_batch_status(batch_id)
+        if not updated_batch_data or updated_batch_data.get("status") == "cancelled":
+            print(f"Process {batch_id} was cancelled")
+            return
+        
         await asyncio.sleep(2)
     
-    batch_status[batch_id]["status"] = "completed"
+    batch_data["status"] = "completed"
+    set_batch_status(batch_id, batch_data)
 
 @app.post("/api/start-process")
 async def start_process(request: StartProcessRequest):
     batch_id = str(uuid.uuid4())
     
-    batch_status[batch_id] = {
+    batch_data = {
         "batch_id": batch_id,
         "status": "initialized",
         "progress": 0,
@@ -101,16 +133,21 @@ async def start_process(request: StartProcessRequest):
         "parameters": request.parameters or {}
     }
     
+    # Save to in-memory storage
+    if not set_batch_status(batch_id, batch_data):
+        raise HTTPException(status_code=500, detail="Failed to save batch status")
+    
     asyncio.create_task(simulate_long_process(batch_id))
     
     return {"batch_id": batch_id, "status": "initialized"}
 
 @app.get("/api/batch-status/{batch_id}", response_model=BatchStatusResponse)
-async def get_batch_status(batch_id: str):
-    if batch_id not in batch_status:
+async def get_batch_status_endpoint(batch_id: str):
+    batch_data = get_batch_status(batch_id)
+    if not batch_data:
         raise HTTPException(status_code=404, detail="Batch ID not found")
     
-    return batch_status[batch_id]
+    return batch_data
 
 @app.get("/api/health")
 async def health_check():
