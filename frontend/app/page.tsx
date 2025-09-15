@@ -10,6 +10,22 @@ interface BatchStatus {
   messages: string[];
   created_at: string;
   updated_at: string;
+  process_type?: string;
+  parameters?: Record<string, any>;
+  result?: {
+    detected_symbols?: Array<{
+      text: string;
+      confidence: number;
+      bbox: {
+        top_left: [number, number];
+        top_right: [number, number];
+        bottom_right: [number, number];
+        bottom_left: [number, number];
+      };
+    }>;
+    marked_image?: string;
+    symbol_count?: number;
+  };
   error?: string;
 }
 
@@ -23,6 +39,8 @@ export default function Home() {
   const [activeProcesses, setActiveProcesses] = useState<Map<string, ActiveProcess>>(new Map());
   const [checkBatchId, setCheckBatchId] = useState<string>('');
   const [manualBatchStatus, setManualBatchStatus] = useState<BatchStatus | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<string>('');
   
  const { 
     isConnected, 
@@ -235,6 +253,68 @@ export default function Home() {
 
   const getActiveProcessesArray = () => Array.from(activeProcesses.values());
 
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setUploadStatus(`Selected file: ${file.name}`);
+    }
+  };
+
+  const handleUploadButtonClick = async () => {
+    if (!selectedFile) return;
+
+    try {
+      setUploadStatus('Uploading file...');
+      
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      
+      const response = await fetch('http://localhost:8000/api/upload-drawing', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to upload file');
+      }
+
+      const data = await response.json();
+      setUploadStatus(`File uploaded successfully. Processing started with batch ID: ${data.batch_id}`);
+      
+      // Initialize the process in our state
+      const initialStatus: BatchStatus = {
+        batch_id: data.batch_id,
+        status: 'initialized',
+        progress: 0,
+        messages: [data.message],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
+      setActiveProcesses(prev => {
+        const newMap = new Map(prev);
+        newMap.set(data.batch_id, {
+          batchId: data.batch_id,
+          status: initialStatus,
+          isActive: true
+        });
+        return newMap;
+      });
+      
+      // Small delay to ensure WebSocket is ready before subscribing
+      setTimeout(() => {
+        subscribeToProcess(data.batch_id);
+      }, 100);
+      
+      // Clear the file input
+      setSelectedFile(null);
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      setUploadStatus('Error uploading file');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-4xl mx-auto">
@@ -257,14 +337,48 @@ export default function Home() {
 
         <div className="mb-6">
           <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold mb-4">Start New Process</h2>
+            <h2 className="text-xl font-semibold mb-4">Upload Engineering Drawing</h2>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Select an engineering drawing image
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="block w-full text-sm text-gray-500
+                  file:mr-4 file:py-2 file:px-4
+                  file:rounded-md file:border-0
+                  file:text-sm file:font-semibold
+                  file:bg-blue-50 file:text-blue-700
+                  hover:file:bg-blue-100"
+              />
+              <p className="mt-1 text-sm text-gray-500">
+                Supported formats: JPG, PNG, BMP, TIFF
+              </p>
+            </div>
+            
+            <button
+              onClick={handleUploadButtonClick}
+              disabled={!selectedFile || !isConnected}
+              className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded transition-colors"
+            >
+              Process Engineering Drawing
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-6">
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-xl font-semibold mb-4">Or Start New Process</h2>
             
             <button
               onClick={startProcess}
               disabled={!isConnected}
-              className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded transition-colors"
+              className="w-full bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded transition-colors"
             >
-              Start New Long Process
+              Start New Long Process (Simulation)
             </button>
             
             <div className="mt-4 text-sm text-gray-600">
@@ -341,6 +455,39 @@ export default function Home() {
                   )}
                 </div>
               </div>
+              
+              {/* Display processed image if available */}
+              {process.status.result && process.status.result.marked_image && (
+                <div className="mb-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <p className="text-sm text-gray-600">Processed Image:</p>
+                    <button 
+                      className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded"
+                      onClick={() => {
+                        // Open image in a new tab/window
+                        const imageUrl = `data:image/png;base64,${process.status.result!.marked_image}`;
+                        const newWindow = window.open();
+                        if (newWindow) {
+                          newWindow.document.write(`<img src="${imageUrl}" style="max-width:100%;height:auto;" />`);
+                          newWindow.document.close();
+                        }
+                      }}
+                    >
+                      View Full Size
+                    </button>
+                  </div>
+                  <div className="border rounded p-2">
+                    <img 
+                      src={`data:image/png;base64,${process.status.result.marked_image}`} 
+                      alt="Processed engineering drawing" 
+                      className="max-w-full h-auto"
+                    />
+                    <p className="text-xs text-gray-500 mt-2">
+                      Symbols detected: {process.status.result.symbol_count}
+                    </p>
+                  </div>
+                </div>
+              )}
               
               <div className="text-xs text-gray-500 grid grid-cols-2 gap-4">
                 <div>Started: {new Date(process.status.created_at).toLocaleString()}</div>

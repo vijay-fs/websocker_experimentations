@@ -27,6 +27,20 @@ interface BatchUpdate {
   message: string;
   progress: number;
   timestamp: string;
+  result?: {
+    detected_symbols?: Array<{
+      text: string;
+      confidence: number;
+      bbox: {
+        top_left: [number, number];
+        top_right: [number, number];
+        bottom_right: [number, number];
+        bottom_left: [number, number];
+      };
+    }>;
+    marked_image?: string;
+    symbol_count?: number;
+  }; // Optional result data for image processing
 }
 
 const connectedClients = new Map<string, Set<string>>();
@@ -77,7 +91,8 @@ io.on('connection', (socket) => {
       batchId: data.batch_id,
       message: data.message,
       timestamp: data.timestamp,
-      progress: data.progress
+      progress: data.progress,
+      result: data.result // Include result data if available
     };
     
     console.log(`Emitting batch_progress to room batch_${data.batch_id}:`, progressData);

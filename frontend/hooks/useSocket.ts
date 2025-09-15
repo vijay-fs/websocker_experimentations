@@ -6,6 +6,20 @@ interface BatchProgress {
   message: string;
   timestamp: string;
   progress: number;
+  result?: {
+    detected_symbols?: Array<{
+      text: string;
+      confidence: number;
+      bbox: {
+        top_left: [number, number];
+        top_right: [number, number];
+        bottom_right: [number, number];
+        bottom_left: [number, number];
+      };
+    }>;
+    marked_image?: string;
+    symbol_count?: number;
+  }; // Optional result data for image processing
 }
 
 interface UseSocketReturn {
