@@ -3,6 +3,52 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSocket } from '@/hooks/useSocket';
 
+// Toast notification component
+interface ToastProps {
+  message: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  onClose: () => void;
+}
+
+const Toast = ({ message, type, onClose }: ToastProps) => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onClose();
+    }, 5000); // Auto-close after 5 seconds
+    
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const bgColor = {
+    success: 'bg-green-500',
+    error: 'bg-red-500',
+    warning: 'bg-yellow-500',
+    info: 'bg-blue-500'
+  }[type];
+
+  const icon = {
+    success: '✅',
+    error: '❌',
+    warning: '⚠️',
+    info: 'ℹ️'
+  }[type];
+
+  return (
+    <div className={`fixed top-4 right-4 ${bgColor} text-white px-4 py-3 rounded-lg shadow-lg z-50 max-w-sm`}>
+      <div className="flex items-center gap-2">
+        <span>{icon}</span>
+        <span className="flex-1">{message}</span>
+        <button 
+          onClick={onClose}
+          className="ml-2 text-white hover:text-gray-200"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+};
+
 interface BatchStatus {
   batch_id: string;
   status: string;
@@ -25,6 +71,14 @@ interface BatchStatus {
     }>;
     marked_image?: string;
     symbol_count?: number;
+    processing_stats?: {
+      total_detections: number;
+      high_confidence_detections: number;
+      image_dimensions: string;
+      original_dimensions: string;
+      processing_time: string;
+      compressed_size_kb: number;
+    };
   };
   error?: string;
 }
@@ -41,6 +95,8 @@ export default function Home() {
   const [manualBatchStatus, setManualBatchStatus] = useState<BatchStatus | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string>('');
+  const [toasts, setToasts] = useState<Array<{id: string, message: string, type: 'success' | 'error' | 'warning' | 'info'}>>([]);
+  const [expandedImages, setExpandedImages] = useState<Set<string>>(new Set());
   
  const { 
     isConnected, 
@@ -130,6 +186,36 @@ export default function Home() {
  // Create a ref to track the last processed batch progress to prevent unnecessary updates
   const lastBatchProgressRef = useRef<Map<string, string>>(new Map());
 
+  // Toast notification functions
+  const addToast = (message: string, type: 'success' | 'error' | 'warning' | 'info') => {
+    const id = Date.now().toString();
+    setToasts(prev => [...prev, { id, message, type }]);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  };
+
+  const toggleImageExpanded = (batchId: string) => {
+    setExpandedImages(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(batchId)) {
+        newSet.delete(batchId);
+      } else {
+        newSet.add(batchId);
+      }
+      return newSet;
+    });
+  };
+
+  const getCurrentProcessingStep = (messages: string[], progress: number) => {
+    if (messages.length === 0) return 'Initializing...';
+    const lastMessage = messages[messages.length - 1];
+    
+    // Remove emoji and clean up the message for display
+    return lastMessage.replace(/[✅❌⚠️ℹ️]/g, '').trim();
+  };
+
   useEffect(() => {
     let hasUpdates = false;
     const newMap = new Map(activeProcesses);
@@ -147,6 +233,27 @@ export default function Home() {
       hasUpdates = true;
       lastBatchProgressRef.current.set(batchId, progressKey);
       
+      // Show toast notification for important progress updates
+      if (progress.messageType && (progress.messageType === 'success' || progress.messageType === 'error' || progress.progress === 100)) {
+        addToast(progress.message, progress.messageType as 'success' | 'error' | 'warning' | 'info');
+      }
+      
+      // Debug log for image data
+      if (progress.result && progress.result.marked_image) {
+        console.log(`📷 Image received for batch ${batchId}:`, {
+          imageSize: progress.result.marked_image.length,
+          symbolCount: progress.result.symbol_count,
+          hasProcessingStats: !!progress.result.processing_stats,
+          imagePreview: progress.result.marked_image.substring(0, 50) + '...'
+        });
+      } else {
+        console.log(`🔍 No image data in progress update for batch ${batchId}:`, {
+          hasResult: !!progress.result,
+          resultKeys: progress.result ? Object.keys(progress.result) : [],
+          progress: progress.progress
+        });
+      }
+      
       const existing = newMap.get(batchId);
       
       const updatedStatus: BatchStatus = {
@@ -157,7 +264,8 @@ export default function Home() {
           [...existing.status.messages, progress.message] : 
           [progress.message],
         created_at: existing?.status.created_at || new Date().toISOString(),
-        updated_at: progress.timestamp
+        updated_at: progress.timestamp,
+        result: progress.result || existing?.status.result // Preserve result data from progress or existing
       };
       
       newMap.set(batchId, {
@@ -172,57 +280,6 @@ export default function Home() {
       setActiveProcesses(newMap);
     }
   }, [batchProgressMap, activeProcesses]);
-
- // Keep all batch IDs in localStorage for visibility, but update active subscriptions
-  // The activeSubscriptions useEffect will handle saving only active batch IDs
-
- const startProcess = async () => {
-    try {
-      const response = await fetch('http://localhost:8000/api/start-process', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          process_type: 'file_processing',
-          parameters: { test: true }
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to start process');
-      }
-
-      const data = await response.json();
-      
-      // Initialize the process in our state
-      const initialStatus: BatchStatus = {
-        batch_id: data.batch_id,
-        status: 'initialized',
-        progress: 0,
-        messages: [],
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-      
-      setActiveProcesses(prev => {
-        const newMap = new Map(prev);
-        newMap.set(data.batch_id, {
-          batchId: data.batch_id,
-          status: initialStatus,
-          isActive: true
-        });
-        return newMap;
-      });
-      
-      // Small delay to ensure WebSocket is ready before subscribing
-      setTimeout(() => {
-        subscribeToProcess(data.batch_id);
-      }, 100);
-    } catch (error) {
-      console.error('Error starting process:', error);
-    }
-  };
 
   const checkBatchStatus = async () => {
     if (!checkBatchId) return;
@@ -317,6 +374,18 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
+      {/* Toast notifications */}
+      <div className="fixed top-4 right-4 space-y-2 z-50">
+        {toasts.map((toast) => (
+          <Toast
+            key={toast.id}
+            message={toast.message}
+            type={toast.type}
+            onClose={() => removeToast(toast.id)}
+          />
+        ))}
+      </div>
+      
       <div className="max-w-4xl mx-auto">
         <h1 className="text-3xl font-bold text-gray-900 mb-8">WebSocket Process Monitor</h1>
         
@@ -369,31 +438,13 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mb-6">
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold mb-4">Or Start New Process</h2>
-            
-            <button
-              onClick={startProcess}
-              disabled={!isConnected}
-              className="w-full bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded transition-colors"
-            >
-              Start New Long Process (Simulation)
-            </button>
-            
-            <div className="mt-4 text-sm text-gray-600">
-              Active Processes: {getActiveProcessesArray().filter(p => p.isActive).length} | 
-              Completed: {getActiveProcessesArray().filter(p => !p.isActive).length}
-            </div>
-          </div>
-        </div>
 
         <div className="grid gap-4 mb-6">
           <h2 className="text-xl font-semibold">Active & Recent Processes</h2>
           
           {getActiveProcessesArray().length === 0 && (
             <div className="bg-white rounded-lg shadow-md p-6 text-center text-gray-500">
-              No processes started yet. Click "Start New Long Process" to begin.
+              No processes started yet. Upload an engineering drawing to begin processing.
             </div>
           )}
           
@@ -429,27 +480,46 @@ export default function Home() {
               <div className="mb-4">
                 <div className="flex justify-between text-sm mb-1">
                   <span>Progress</span>
-                  <span>{process.status.progress}%</span>
+                  <span className="font-semibold">{process.status.progress}%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-3">
+                <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
                   <div
-                    className={`h-3 rounded-full transition-all duration-300 ${
-                      process.isActive ? 'bg-blue-600' : 'bg-green-600'
-                    }`}
+                    className={`h-4 rounded-full transition-all duration-500 ease-out ${
+                      process.isActive ? 'bg-gradient-to-r from-blue-500 to-blue-600' : 'bg-gradient-to-r from-green-500 to-green-600'
+                    } ${process.isActive && process.status.progress > 0 ? 'animate-pulse' : ''}`}
                     style={{ width: `${process.status.progress}%` }}
                   ></div>
                 </div>
+                {process.isActive && (
+                  <div className="text-xs text-blue-600 mt-1 font-medium flex items-center gap-2">
+                    <span className="animate-spin">🔄</span>
+                    <span>{getCurrentProcessingStep(process.status.messages, process.status.progress)}</span>
+                  </div>
+                )}
               </div>
               
               <div className="mb-4">
-                <p className="text-sm text-gray-600 mb-2">Messages:</p>
+                <p className="text-sm text-gray-600 mb-2">Processing Log:</p>
                 <div className="max-h-32 overflow-y-auto bg-gray-50 p-3 rounded text-sm space-y-1">
-                  {process.status.messages.map((message, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <span className="text-gray-400">•</span>
-                      <span>{message}</span>
-                    </div>
-                  ))}
+                  {process.status.messages.map((message, index) => {
+                    const isLatest = index === process.status.messages.length - 1;
+                    const isSuccess = message.includes('✅') || message.includes('completed');
+                    const isError = message.includes('❌') || message.includes('failed') || message.includes('error');
+                    
+                    return (
+                      <div key={index} className={`flex items-center gap-2 ${
+                        isLatest && process.isActive ? 'font-medium text-blue-700 bg-blue-50 px-2 py-1 rounded' : ''
+                      } ${
+                        isSuccess ? 'text-green-700' : isError ? 'text-red-700' : ''
+                      }`}>
+                        <span className="text-gray-400">•</span>
+                        <span>{message}</span>
+                        {isLatest && process.isActive && (
+                          <span className="ml-auto text-xs animate-pulse">🔄</span>
+                        )}
+                      </div>
+                    );
+                  })}
                   {process.status.messages.length === 0 && (
                     <span className="text-gray-400 italic">No messages yet...</span>
                   )}
@@ -457,34 +527,135 @@ export default function Home() {
               </div>
               
               {/* Display processed image if available */}
-              {process.status.result && process.status.result.marked_image && (
+              {(() => {
+                // Debug logging
+                console.log(`🔍 Process ${process.batchId} result check:`, {
+                  hasResult: !!process.status.result,
+                  hasImage: !!(process.status.result && process.status.result.marked_image),
+                  resultKeys: process.status.result ? Object.keys(process.status.result) : [],
+                  progress: process.status.progress,
+                  status: process.status.status
+                });
+                return null;
+              })()}
+              
+              {/* Prominent View Results Button */}
+              {process.status.result && process.status.result.marked_image && !process.isActive && (
                 <div className="mb-4">
-                  <div className="flex justify-between items-center mb-2">
-                    <p className="text-sm text-gray-600">Processed Image:</p>
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                          <span className="text-green-600 text-xl">📷</span>
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-green-800">Processing Complete!</h3>
+                          <p className="text-sm text-green-600">
+                            {process.status.result.symbol_count} text elements detected in your engineering drawing
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => toggleImageExpanded(process.batchId)}
+                        className="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        <span>📋</span>
+                        View OCR Results
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Collapsible detailed results */}
+              {process.status.result && process.status.result.marked_image && expandedImages.has(process.batchId) && (
+                <div className="mb-4">
+                  <div className="mb-2 flex justify-between items-center">
+                    <button
+                      onClick={() => toggleImageExpanded(process.batchId)}
+                      className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 font-medium"
+                    >
+                      <span className="transform rotate-90 transition-transform duration-200">
+                        ▶
+                      </span>
+                      Hide Detailed Results
+                    </button>
                     <button 
                       className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded"
                       onClick={() => {
-                        // Open image in a new tab/window
-                        const imageUrl = `data:image/png;base64,${process.status.result!.marked_image}`;
-                        const newWindow = window.open();
-                        if (newWindow) {
-                          newWindow.document.write(`<img src="${imageUrl}" style="max-width:100%;height:auto;" />`);
-                          newWindow.document.close();
+                        if (process.status.result?.marked_image) {
+                          const imageUrl = `data:image/jpeg;base64,${process.status.result.marked_image}`;
+                          const newWindow = window.open();
+                          if (newWindow) {
+                            newWindow.document.write(`<img src="${imageUrl}" style="max-width:100%;height:auto;" />`);
+                            newWindow.document.close();
+                          }
                         }
                       }}
                     >
                       View Full Size
                     </button>
                   </div>
-                  <div className="border rounded p-2">
-                    <img 
-                      src={`data:image/png;base64,${process.status.result.marked_image}`} 
-                      alt="Processed engineering drawing" 
-                      className="max-w-full h-auto"
-                    />
-                    <p className="text-xs text-gray-500 mt-2">
-                      Symbols detected: {process.status.result.symbol_count}
-                    </p>
+                  
+                  <div className="border rounded p-3 bg-gray-50">
+                    <div className="mb-3">
+                      {process.status.result?.marked_image ? (
+                        <img 
+                          src={`data:image/jpeg;base64,${process.status.result.marked_image}`} 
+                          alt="Processed engineering drawing with OCR annotations" 
+                          className="max-w-full h-auto rounded border cursor-pointer hover:shadow-lg transition-shadow"
+                          onClick={() => {
+                            if (process.status.result?.marked_image) {
+                              const imageUrl = `data:image/jpeg;base64,${process.status.result.marked_image}`;
+                              const newWindow = window.open();
+                              if (newWindow) {
+                                newWindow.document.write(`<img src="${imageUrl}" style="max-width:100%;height:auto;" />`);
+                                newWindow.document.close();
+                              }
+                            }
+                          }}
+                          onError={(e) => {
+                            console.error('Image failed to load:', e);
+                            console.log('Image data length:', process.status.result?.marked_image?.length);
+                          }}
+                          onLoad={() => {
+                            console.log('✅ Image loaded successfully');
+                          }}
+                        />
+                      ) : (
+                        <div className="bg-gray-200 rounded p-4 text-center text-gray-500">
+                          <p>🖼️ Processing image...</p>
+                          <p className="text-xs mt-1">Image will appear here once processing is complete</p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* OCR Results Summary */}
+                    <div className="grid grid-cols-2 gap-4 text-xs text-gray-600">
+                      <div>
+                        <span className="font-medium">Symbols Detected:</span> {process.status.result?.symbol_count}
+                      </div>
+                      {process.status.result?.processing_stats && (
+                        <>
+                          <div>
+                            <span className="font-medium">Total Detections:</span> {process.status.result.processing_stats.total_detections}
+                          </div>
+                          <div>
+                            <span className="font-medium">Image Size:</span> {process.status.result.processing_stats.image_dimensions}
+                          </div>
+                          <div>
+                            <span className="font-medium">Processed:</span> {new Date(process.status.result.processing_stats.processing_time).toLocaleTimeString()}
+                          </div>
+                          <div>
+                            <span className="font-medium">File Size:</span> {process.status.result.processing_stats.compressed_size_kb}KB
+                          </div>
+                          <div>
+                            <span className="font-medium">Original Size:</span> {process.status.result.processing_stats.original_dimensions}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    
                   </div>
                 </div>
               )}

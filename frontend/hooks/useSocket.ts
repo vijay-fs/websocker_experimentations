@@ -6,6 +6,7 @@ interface BatchProgress {
   message: string;
   timestamp: string;
   progress: number;
+  messageType?: string; // info, success, error, warning for toast notifications
   result?: {
     detected_symbols?: Array<{
       text: string;
@@ -19,6 +20,14 @@ interface BatchProgress {
     }>;
     marked_image?: string;
     symbol_count?: number;
+    processing_stats?: {
+      total_detections: number;
+      high_confidence_detections: number;
+      image_dimensions: string;
+      original_dimensions: string;
+      processing_time: string;
+      compressed_size_kb: number;
+    };
   }; // Optional result data for image processing
 }
 
@@ -91,7 +100,26 @@ export const useSocket = (serverUrl: string = 'http://localhost:8001'): UseSocke
       }
       
       lastBatchProgressRef.current.set(data.batchId, progressKey);
-      console.log('Frontend received batch progress:', data);
+      
+      // Enhanced logging with message type icons
+      const messageIcon = {
+        'success': '✅',
+        'error': '❌', 
+        'warning': '⚠️',
+        'info': 'ℹ️'
+      }[data.messageType || 'info'] || 'ℹ️';
+      
+      console.log(`${messageIcon} Frontend received batch progress:`, {
+        batchId: data.batchId,
+        message: data.message,
+        progress: data.progress,
+        messageType: data.messageType,
+        timestamp: data.timestamp,
+        hasResult: !!data.result,
+        hasImage: !!(data.result && data.result.marked_image),
+        imageSize: data.result?.marked_image?.length || 0
+      });
+      
       setBatchProgressMap(prev => {
         const newMap = new Map(prev);
         newMap.set(data.batchId, data);

@@ -18,7 +18,10 @@ const io = new Server(httpServer, {
     credentials: true,
     allowedHeaders: ["*"],
     exposedHeaders: ["*"]
-  }
+  },
+  maxHttpBufferSize: 10e6, // 10MB buffer for large images
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 interface BatchUpdate {
@@ -27,6 +30,7 @@ interface BatchUpdate {
   message: string;
   progress: number;
   timestamp: string;
+  message_type?: string; // info, success, error, warning
   result?: {
     detected_symbols?: Array<{
       text: string;
@@ -92,10 +96,21 @@ io.on('connection', (socket) => {
       message: data.message,
       timestamp: data.timestamp,
       progress: data.progress,
+      messageType: data.message_type || 'info', // Include message type for toast notifications
       result: data.result // Include result data if available
     };
     
-    console.log(`Emitting batch_progress to room batch_${data.batch_id}:`, progressData);
+    // Log without large image data to avoid terminal flooding
+    const logData = { ...progressData };
+    if (logData.result && logData.result.marked_image) {
+      console.log(`📷 Image data detected for batch ${data.batch_id}: ${logData.result.marked_image.length} chars`);
+      logData.result = { 
+        ...logData.result, 
+        marked_image: `[BASE64_IMAGE_${logData.result.marked_image.length}chars]` 
+      };
+    }
+    console.log(`Emitting batch_progress to room batch_${data.batch_id}:`, logData);
+    
     io.to(`batch_${data.batch_id}`).emit('batch_progress', progressData);
     console.log(`Broadcast completed for batch ${data.batch_id}`);
   });

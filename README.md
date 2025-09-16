@@ -1,262 +1,135 @@
-# WebSocket Tutorial Monorepo
+# Real-Time OCR Engineering Drawing Processor
 
-A full-stack real-time processing application with multiple concurrent process support, built with FastAPI, Socket.IO, and Next.js.
+A full-stack application for processing engineering drawings with real-time OCR text detection and WebSocket-based progress updates.
 
-## 🏗️ Architecture
+## Demo
+
+![Demo 1](assets/demo1.PNG)
+*Real-time processing interface with progress tracking*
+
+![Demo 2](assets/demo2.PNG)
+*OCR results with annotated engineering drawing*
+
+## Features
+
+### Core Functionality
+- **Real-Time OCR Processing**: Uses EasyOCR for accurate text detection in engineering drawings
+- **Live Progress Updates**: WebSocket-based real-time progress tracking with detailed status messages
+- **Multi-Format Support**: Supports JPG, PNG, BMP, and TIFF image formats
+- **Image Optimization**: Automatic compression and resizing for efficient transmission
+
+### User Interface
+- **File Upload Interface**: Drag-and-drop file selection with format validation
+- **Progress Visualization**: Animated progress bars with current processing step indicators
+- **Toast Notifications**: Success, error, and info notifications with auto-dismiss
+- **Responsive Design**: Modern, clean interface with hover effects and transitions
+
+### Results Display
+- **Processed Image Viewer**: Click-to-expand annotated images with OCR markings
+- **Processing Statistics**: Image dimensions, file sizes, detection counts, and processing time
+- **Full-Size Image View**: Open processed images in new window for detailed inspection
+- **Collapsible Results**: Expandable sections for detailed OCR analysis
+
+### Real-Time Features
+- **WebSocket Connection**: Live connection status indicator
+- **Process Monitoring**: Track multiple concurrent processing jobs
+- **Automatic Recovery**: Reconnection handling and batch status restoration
+- **Persistent State**: Process history maintained across browser sessions
+
+## Tech Stack
+
+### Backend
+- **FastAPI**: High-performance Python web framework
+- **EasyOCR**: Advanced OCR library for text detection
+- **Pillow**: Image processing and manipulation
+- **Socket.IO**: Real-time WebSocket communication
+- **Asyncio**: Asynchronous processing for concurrent operations
+
+### WebSocket Server
+- **Node.js/TypeScript**: Real-time message broadcasting
+- **Socket.IO**: WebSocket server with room-based subscriptions
+- **Express**: HTTP server for health checks
+
+### Frontend
+- **Next.js 15**: React framework with TypeScript
+- **Socket.IO Client**: Real-time WebSocket integration
+- **Tailwind CSS**: Modern styling and responsive design
+- **React Hooks**: Custom WebSocket management and state handling
+
+## Architecture
 
 ```
-websocket_tutorial/
-├── backend/           # FastAPI backend with UV package manager
-├── websocket-server/  # Node.js Socket.IO server
-├── frontend/          # Next.js React frontend
-└── package.json       # Root package.json for monorepo scripts
+Frontend (Next.js) ←→ WebSocket Server (Node.js) ←→ Backend (FastAPI)
+                                ↓
+                        Real-time Progress Updates
+                                ↓
+                        EasyOCR Processing Engine
 ```
 
-## 🚀 Features
+## Key Capabilities
 
-- **Real-time Processing**: Long-running processes with live progress updates
-- **Multiple Concurrent Processes**: Start and monitor multiple processes simultaneously
-- **WebSocket Communication**: Real-time updates via Socket.IO
-- **Fallback Recovery**: Manual batch status checking for network interruptions
-- **Modern Stack**: FastAPI + Socket.IO + Next.js + TypeScript
-- **Package Management**: UV for Python, Yarn for Node.js
+1. **Engineering Drawing Analysis**: Specialized for technical drawings and schematics
+2. **Real-Time Feedback**: Incremental progress updates during processing
+3. **Image Annotation**: Visual markup of detected text elements
+4. **Batch Processing**: Handle multiple files with individual progress tracking
+5. **Error Handling**: Comprehensive error recovery and user feedback
+6. **Performance Optimization**: Compressed image transmission and efficient rendering
 
-## 🛠️ Tech Stack
-
-### Backend (FastAPI)
-- **Python 3.11+** with UV package manager
-- **FastAPI** for REST API
-- **Python Socket.IO** client for real-time communication
-- **Pydantic** for data validation
-- **AsyncIO** for concurrent processing
-
-### WebSocket Server (Node.js)
-- **Node.js** with TypeScript
-- **Socket.IO** for real-time communication
-- **Express** for health endpoints
-- **CORS** enabled for cross-origin requests
-
-### Frontend (Next.js)
-- **Next.js 15** with App Router
-- **TypeScript** for type safety
-- **Tailwind CSS** for styling
-- **Socket.IO Client** for real-time updates
-- **React Hooks** for state management
-
-## 🏃‍♂️ Quick Start
+## Getting Started
 
 ### Prerequisites
-- **Node.js 18+**
-- **Python 3.11+**
-- **UV** (Python package manager)
-- **Yarn** (Node.js package manager)
+- Node.js 18+
+- Python 3.8+
+- Yarn package manager
 
 ### Installation
 
-1. **Clone the repository:**
-```bash
-git clone https://github.com/vijay-fs/websocker_experimentations.git
-cd websocker_experimentations
-```
+1. **Install dependencies**:
+   ```bash
+   yarn install
+   ```
 
-2. **Install all dependencies:**
-```bash
-yarn install:all
-```
+2. **Backend setup**:
+   ```bash
+   cd backend
+   pip install -r requirements.txt
+   ```
 
-3. **Start all services:**
-```bash
-yarn dev
-```
+3. **Start services**:
+   ```bash
+   # Terminal 1: WebSocket Server
+   cd websocket-server
+   yarn dev
 
-This will start:
-- 🔥 **Backend**: http://localhost:8000
-- 🌐 **Frontend**: http://localhost:3000  
-- 🔌 **WebSocket Server**: http://localhost:8001
+   # Terminal 2: Backend API
+   cd backend
+   python main.py
 
-## 📡 API Endpoints
+   # Terminal 3: Frontend
+   yarn dev
+   ```
 
-### Backend (FastAPI)
-- `POST /api/start-process` - Start a new long-running process
-- `GET /api/batch-status/{batch_id}` - Get process status by batch ID
-- `GET /api/health` - Health check endpoint
+4. **Access application**:
+   - Frontend: http://localhost:3000
+   - Backend API: http://localhost:8000
+   - WebSocket Server: http://localhost:8001
 
-### WebSocket Server
-- `GET /health` - Health check endpoint
-- `GET /status` - Connection status and client info
-- **Socket Events:**
-  - `subscribe_to_batch` - Subscribe to process updates
-  - `unsubscribe_from_batch` - Unsubscribe from process updates
-  - `batch_progress` - Receive real-time progress updates
+## Usage
 
-## 🎯 Usage
+1. **Upload Engineering Drawing**: Select an image file (JPG, PNG, BMP, TIFF)
+2. **Monitor Progress**: Watch real-time processing updates with detailed steps
+3. **View Results**: Access processed images with OCR annotations
+4. **Analyze Data**: Review detection statistics and processing metrics
+5. **Full-Size Viewing**: Click images to open in new window for detailed inspection
 
-1. **Open the frontend** at http://localhost:3000
-2. **Start processes** by clicking "Start New Long Process"
-3. **Monitor real-time updates** in the process cards
-4. **Start multiple processes** concurrently to see parallel processing
-5. **Use manual batch check** for recovery if WebSocket disconnects
+## API Endpoints
 
-### Process Flow
+- `POST /api/upload-drawing`: Upload and process engineering drawing
+- `GET /api/batch-status/{batch_id}`: Get processing status
+- `GET /api/health`: Health check endpoint
 
-```mermaid
-sequenceDiagram
-    participant F as Frontend
-    participant W as WebSocket Server
-    participant B as Backend
-    
-    F->>W: Connect & Subscribe to batch
-    F->>B: POST /api/start-process
-    B-->>F: Return batch_id
-    
-    loop Every 2 seconds
-        B->>W: Send progress update
-        W->>F: Broadcast to subscribers
-        F->>F: Update UI in real-time
-    end
-```
+## WebSocket Events
 
-## 🔧 Development
-
-### Individual Services
-
-**Backend only:**
-```bash
-cd backend
-uv run uvicorn main:app --reload --port 8000
-```
-
-**WebSocket Server only:**
-```bash
-cd websocket-server
-yarn dev
-```
-
-**Frontend only:**
-```bash
-cd frontend
-npm run dev
-```
-
-### Available Scripts
-
-```bash
-# Start all services
-yarn dev
-
-# Install all dependencies
-yarn install:all
-
-# Individual service commands
-yarn dev:frontend    # Start Next.js frontend
-yarn dev:websocket   # Start Socket.IO server
-yarn dev:backend     # Start FastAPI backend
-```
-
-## 🏗️ Project Structure
-
-```
-├── backend/
-│   ├── main.py              # FastAPI application
-│   ├── pyproject.toml       # Python dependencies
-│   └── .venv/               # Python virtual environment
-│
-├── websocket-server/
-│   ├── src/
-│   │   └── server.ts        # Socket.IO server
-│   ├── package.json         # Node.js dependencies
-│   └── tsconfig.json        # TypeScript configuration
-│
-├── frontend/
-│   ├── app/
-│   │   └── page.tsx         # Main application page
-│   ├── hooks/
-│   │   └── useSocket.ts     # Socket.IO React hook
-│   ├── package.json         # Next.js dependencies
-│   └── tailwind.config.js   # Tailwind configuration
-│
-├── node_modules/            # Root shared dependencies (see below)
-├── package.json             # Monorepo root configuration
-├── package-lock.json        # Dependency lock file
-└── yarn.lock               # Yarn workspace lock file
-```
-
-### 📦 Dependency Management & node_modules Structure
-
-This project uses **Yarn Workspaces** for monorepo dependency management:
-
-**Root node_modules contains:**
-- **Shared dependencies**: `concurrently` for running multiple services
-- **Common packages**: `socket.io-client` used by frontend
-- **Hoisted dependencies**: Yarn automatically moves common dependencies to root to avoid duplication
-
-**Why root node_modules exists:**
-- **Workspace management**: Root level manages monorepo orchestration scripts
-- **Dependency optimization**: Shared packages are hoisted to root to save disk space
-- **Script execution**: Root scripts like `yarn dev` use `concurrently` from root node_modules
-
-**Apps using root dependencies:**
-- **Frontend workspace**: Uses `socket.io-client` for WebSocket connections
-- **WebSocket server workspace**: May share common Node.js dependencies
-- **Monorepo scripts**: Use `concurrently` to run multiple services simultaneously
-
-Individual workspaces (frontend/, websocket-server/) have their own specific dependencies in their respective node_modules directories.
-
-## 🌟 Key Features Explained
-
-### Multiple Concurrent Processing
-- Start unlimited concurrent processes
-- Each process runs independently
-- Real-time progress tracking for all processes
-- Visual distinction between active/completed processes
-
-### Real-time Updates
-- Live progress bars with smooth animations
-- Message streaming ("Processing...", "Extracting...", "Detecting...")
-- Automatic completion detection
-- Connection status indicators
-
-### Network Resilience
-- Automatic WebSocket reconnection
-- Manual batch status checking fallback
-- Error handling and user feedback
-- Connection retry with exponential backoff
-
-### Modern UI/UX
-- Responsive design with Tailwind CSS
-- Process cards with individual controls
-- Real-time counters and statistics
-- Clean, professional interface
-
-## 🐛 Troubleshooting
-
-**WebSocket connection fails:**
-- Ensure all services are running on correct ports
-- Check CORS configuration in WebSocket server
-- Verify no firewall blocking ports 8001
-
-**Backend can't connect to WebSocket server:**
-- Ensure `aiohttp` is installed: `uv add aiohttp`
-- Check WebSocket server is running on port 8001
-- Verify Socket.IO server accepts connections
-
-**Frontend not updating:**
-- Check browser console for connection errors
-- Verify WebSocket server logs show client connections
-- Ensure proper subscription to batch IDs
-
-## 📝 License
-
-MIT License - see LICENSE file for details.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test all services work together
-5. Submit a pull request
-
----
-
-Built with ❤️ using modern web technologies for real-time applications.
+- `subscribe_to_batch`: Subscribe to processing updates
+- `unsubscribe_from_batch`: Unsubscribe from updates
+- `batch_progress`: Real-time progress notifications
