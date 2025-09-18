@@ -1,5 +1,5 @@
-# Use Python 3.13 to match local environment
-FROM python:3.13-slim
+# Use Python 3.11 for better package compatibility
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
