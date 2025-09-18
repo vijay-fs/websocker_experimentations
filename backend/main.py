@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 import socketio
@@ -11,6 +12,7 @@ import logging
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
 # Import EasyOCR and image processing libraries
 import easyocr
@@ -37,7 +39,12 @@ batch_status_memory: Dict[str, Dict[str, Any]] = {}
 # Initialize EasyOCR reader (supports multiple languages)
 reader = easyocr.Reader(['en'])
 
-SOCKETIO_SERVER_URL = "http://localhost:8001"
+# Load environment variables
+load_dotenv()
+
+# Get WebSocket server URL from environment variable with default
+SOCKETIO_SERVER_URL = os.getenv("SOCKETIO_SERVER_URL", "http://localhost:8001")
+logger.info(f"Connecting to Socket.IO server at {SOCKETIO_SERVER_URL}")
 sio = socketio.AsyncClient()
 
 # Constants for retry logic
