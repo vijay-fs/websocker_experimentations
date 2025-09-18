@@ -355,7 +355,12 @@ async def process_engineering_drawing(batch_id: str, image_data: bytes):
         if marked_image.width > max_width:
             ratio = max_width / marked_image.width
             new_height = int(marked_image.height * ratio)
-            marked_image = marked_image.resize((max_width, new_height), Image.Resampling.LANCZOS)
+            # Use LANCZOS (high-quality downsampling) if available, fall back to ANTIALIAS for older Pillow versions
+            try:
+                marked_image = marked_image.resize((max_width, new_height), Image.Resampling.LANCZOS)
+            except AttributeError:
+                # Fallback for older Pillow versions
+                marked_image = marked_image.resize((max_width, new_height), Image.LANCZOS if hasattr(Image, 'LANCZOS') else Image.ANTIALIAS)
         
         buffered = BytesIO()
         # Use JPEG with quality optimization for smaller file size
@@ -484,3 +489,4 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+    
