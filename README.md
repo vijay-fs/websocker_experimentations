@@ -78,11 +78,31 @@ Frontend (Next.js) ←→ WebSocket Server (Node.js) ←→ Backend (FastAPI)
 ## Getting Started
 
 ### Prerequisites
+- Docker and Docker Compose
+- Git
+
+### Docker Installation (Recommended)
+
+1. **Clone and start with Docker**:
+   ```bash
+   git clone <your-repo-url>
+   cd websocker_experimentations
+   docker-compose up --build
+   ```
+
+2. **Access application**:
+   - Frontend: http://localhost:3000
+   - Backend API: http://localhost:8000
+   - WebSocket Server: http://localhost:8001
+
+### Manual Installation (Alternative)
+
+#### Prerequisites
 - Node.js 18+
 - Python 3.8+
 - Yarn package manager
 
-### Installation
+#### Steps
 
 1. **Install dependencies**:
    ```bash
@@ -113,6 +133,42 @@ Frontend (Next.js) ←→ WebSocket Server (Node.js) ←→ Backend (FastAPI)
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:8000
    - WebSocket Server: http://localhost:8001
+
+## Docker Commands
+
+### Basic Operations
+```bash
+# Start all services
+docker-compose up
+
+# Start with rebuild
+docker-compose up --build
+
+# Start in background
+docker-compose up -d
+
+# Stop all services
+docker-compose down
+
+# View logs
+docker-compose logs -f
+
+# Rebuild specific service
+docker-compose build backend
+```
+
+### Development with Docker
+```bash
+# Start only backend and websocket
+docker-compose up backend websocket-server
+
+# Scale services (if needed)
+docker-compose up --scale backend=2
+
+# Execute commands in running container
+docker-compose exec backend bash
+docker-compose exec frontend sh
+```
 
 ## Usage
 
