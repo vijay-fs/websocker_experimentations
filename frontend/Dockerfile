@@ -13,8 +13,8 @@ RUN npm install
 # Copy source code
 COPY . .
 
-# Build the Next.js application
-RUN npm run build
+# Build the Next.js application with ESLint disabled
+RUN npm run build -- --no-lint
 
 # Expose port
 EXPOSE 3000

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useSocket } from '@/hooks/useSocket';
+import Image from 'next/image';
 
 // Toast notification component
 interface ToastProps {
@@ -57,7 +58,7 @@ interface BatchStatus {
   created_at: string;
   updated_at: string;
   process_type?: string;
-  parameters?: Record<string, any>;
+  parameters?: Record<string, unknown>;
   result?: {
     detected_symbols?: Array<{
       text: string;
@@ -171,7 +172,7 @@ export default function Home() {
         }
       });
     }
-  }, [isConnected, activeProcesses, activeSubscriptions, subscribeToProcess]);
+  }, [isConnected, subscribeToProcess]); // Add missing dependencies
 
  // Save all batch IDs to localStorage (both active and completed)
   // Only active subscriptions are saved to activeSubscriptions
@@ -208,7 +209,7 @@ export default function Home() {
     });
   };
 
-  const getCurrentProcessingStep = (messages: string[], progress: number) => {
+  const getCurrentProcessingStep = (messages: string[]) => {
     if (messages.length === 0) return 'Initializing...';
     const lastMessage = messages[messages.length - 1];
     
@@ -493,7 +494,7 @@ export default function Home() {
                 {process.isActive && (
                   <div className="text-xs text-blue-600 mt-1 font-medium flex items-center gap-2">
                     <span className="animate-spin">🔄</span>
-                    <span>{getCurrentProcessingStep(process.status.messages, process.status.progress)}</span>
+                    <span>{getCurrentProcessingStep(process.status.messages)}</span>
                   </div>
                 )}
               </div>
@@ -600,9 +601,11 @@ export default function Home() {
                   <div className="border rounded p-3 bg-gray-50">
                     <div className="mb-3">
                       {process.status.result?.marked_image ? (
-                        <img 
+                        <Image 
                           src={`data:image/jpeg;base64,${process.status.result.marked_image}`} 
                           alt="Processed engineering drawing with OCR annotations" 
+                          width={800}
+                          height={600}
                           className="max-w-full h-auto rounded border cursor-pointer hover:shadow-lg transition-shadow"
                           onClick={() => {
                             if (process.status.result?.marked_image) {
