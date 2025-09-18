@@ -355,12 +355,13 @@ async def process_engineering_drawing(batch_id: str, image_data: bytes):
         if marked_image.width > max_width:
             ratio = max_width / marked_image.width
             new_height = int(marked_image.height * ratio)
-            # Use LANCZOS (high-quality downsampling) if available, fall back to ANTIALIAS for older Pillow versions
+            # Handle all Pillow versions for image resizing
             try:
+                # Pillow 9.0.0+ with Resampling enum
                 marked_image = marked_image.resize((max_width, new_height), Image.Resampling.LANCZOS)
-            except AttributeError:
-                # Fallback for older Pillow versions
-                marked_image = marked_image.resize((max_width, new_height), Image.LANCZOS if hasattr(Image, 'LANCZOS') else Image.ANTIALIAS)
+            except (AttributeError, TypeError):
+                # Pillow < 9.0.0 with direct LANCZOS constant, or fallback to default resizing
+                marked_image = marked_image.resize((max_width, new_height), getattr(Image, 'LANCZOS', 1))
         
         buffered = BytesIO()
         # Use JPEG with quality optimization for smaller file size
