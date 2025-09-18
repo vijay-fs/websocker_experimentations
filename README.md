@@ -25,7 +25,7 @@ A full-stack application for processing engineering drawings with real-time OCR 
 - **Responsive Design**: Modern, clean interface with hover effects and transitions
 
 ### Results Display
-- **Processed Image Viewer**: Click-to-expand annotated images with OCR markings
+- **Processed Image Viewer**: Click-to-expand  annotated images with OCR markings
 - **Processing Statistics**: Image dimensions, file sizes, detection counts, and processing time
 - **Full-Size Image View**: Open processed images in new window for detailed inspection
 - **Collapsible Results**: Expandable sections for detailed OCR analysis
@@ -68,7 +68,7 @@ Frontend (Next.js) ←→ WebSocket Server (Node.js) ←→ Backend (FastAPI)
 
 ## Key Capabilities
 
-1. **Engineering Drawing Analysis**: Specialized for technical drawings and schematics
+1. **Engineering Drawing Analysis**: Specialized for technical drawings and schematic
 2. **Real-Time Feedback**: Incremental progress updates during processing
 3. **Image Annotation**: Visual markup of detected text elements
 4. **Batch Processing**: Handle multiple files with individual progress tracking
