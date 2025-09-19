@@ -348,7 +348,7 @@ async def process_engineering_drawing(batch_id: str, image_data: bytes):
         
 
         buffered = BytesIO()
-        # Use JPEG with quality optimization for smaller file size
+        # Use of JPEG with quality optimization for smaller file size
         marked_image.save(buffered, format="JPEG", quality=85, optimize=True)
         img_str = base64.b64encode(buffered.getvalue()).decode()
         
