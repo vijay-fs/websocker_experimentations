@@ -357,7 +357,7 @@ async def process_engineering_drawing(batch_id: str, image_data: bytes):
         await send_to_socketio(batch_id, "Finalizing results...", 95, None, "info")
         await asyncio.sleep(1)
         
-        # Prepare final results
+        # Prepare final result
         result_data = {
             "detected_symbols": detected_symbols,
             "marked_image": img_str,
