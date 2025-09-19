@@ -346,23 +346,7 @@ async def process_engineering_drawing(batch_id: str, image_data: bytes):
                     }
                 })
         
-        # Convert processed image to base64 with compression
-        await send_to_socketio(batch_id, "Encoding processed image for display...", 80, None, "info")
-        await asyncio.sleep(1)
-        
-        # Resize image if too large for better WebSocket transmission
-        max_width = 1200
-        if marked_image.width > max_width:
-            ratio = max_width / marked_image.width
-            new_height = int(marked_image.height * ratio)
-            # Handle all Pillow versions for image resizing
-            try:
-                # Pillow 9.0.0+ with Resampling enum
-                marked_image = marked_image.resize((max_width, new_height), Image.Resampling.LANCZOS)
-            except (AttributeError, TypeError):
-                # Pillow < 9.0.0 with direct LANCZOS constant, or fallback to default resizing
-                marked_image = marked_image.resize((max_width, new_height), getattr(Image, 'LANCZOS', 1))
-        
+
         buffered = BytesIO()
         # Use JPEG with quality optimization for smaller file size
         marked_image.save(buffered, format="JPEG", quality=85, optimize=True)
