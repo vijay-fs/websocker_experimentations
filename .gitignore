@@ -5,7 +5,14 @@ node_modules/
 
 # Python Virtual Environment
 .venv/
+*/.venv/
+**/.venv/
+venv/
+*/venv/
+**/venv/
 __pycache__/
+*/__pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -170,6 +177,68 @@ test-client.js
 # Temporary files
 *.tmp
 *.temp
+
+# Large binary files and caches
+*.dylib
+*.dll
+*.exe
+*.app
+*.deb
+*.rpm
+*.msi
+*.dmg
+*.pkg
+*.AppImage
+
+# Docker volumes and data
+docker-data/
+volumes/
+data/
+
+# Large media files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.flv
+*.wmv
+*.m4v
+*.3gp
+*.mp3
+*.wav
+*.flac
+*.aac
+*.ogg
+*.wma
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Archive files
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.tbz2
+*.tar.xz
+*.txz
+*.7z
+*.rar
+*.gz
+*.bz2
+*.xz
 
 # node_modules
 node_modules
