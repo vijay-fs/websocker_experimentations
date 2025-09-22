@@ -7,15 +7,15 @@ const app = express();
 const httpServer = createServer(app);
 
 app.use(cors({
-  origin: ["http://localhost:3000", "http://127.0.0.1:3000"],
-  credentials: true
+  origin: "*",
+  credentials: false
 }));
 
 const io = new Server(httpServer, {
   cors: {
-    origin: ["http://localhost:3000", "http://127.0.0.1:3000"],
+    origin: "*",
     methods: ["GET", "POST"],
-    credentials: true,
+    credentials: false,
     allowedHeaders: ["*"],
     exposedHeaders: ["*"]
   },

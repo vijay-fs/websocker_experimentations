@@ -1,0 +1,47 @@
+{
+  "debug": true,
+  "port": 6001,
+  "metrics": {
+    "enabled": false
+  },
+  "cache": {
+    "driver": "memory"
+  },
+  "queue": {
+    "driver": "sync"
+  },
+  "rateLimiter": {
+    "driver": "memory"
+  },
+  "httpApi": {
+    "requestLimitInMb": 100,
+    "acceptTraffic": {
+      "memoryThreshold": 85
+    }
+  },
+  "websockets": {
+    "acceptTraffic": {
+      "memoryThreshold": 85
+    }
+  },
+  "appManager": {
+    "driver": "array",
+    "array": {
+      "apps": [
+        {
+          "id": "app-id",
+          "key": "app-key",
+          "secret": "app-secret",
+          "maxConnections": 100,
+          "enableClientMessages": true,
+          "enabled": true,
+          "maxBackendEventsPerSecond": 100,
+          "maxClientEventsPerSecond": 100,
+          "maxReadRequestsPerSecond": 100,
+          "webhooks": [],
+          "enableAuthorization": false
+        }
+      ]
+    }
+  }
+}

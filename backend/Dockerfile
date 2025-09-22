@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install minimal system dependencies required for CPU processing
+# Install system dependencies required for CPU processing and Redis
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -19,6 +19,9 @@ RUN apt-get update && apt-get install -y \
     libfreetype6-dev \
     liblcms2-dev \
     libwebp-dev \
+    gcc \
+    python3-dev \
+    redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Install NumPy first as it's a common dependency
@@ -30,11 +33,35 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip uninstall -y torch torchvision \
     && pip install --no-cache-dir torch==2.0.1+cpu torchvision==0.15.2+cpu -f https://download.pytorch.org/whl/torch_stable.html
 
+# Download EasyOCR models during build
+RUN python -c "import easyocr; easyocr.Reader(['en'])"
+
 # Copy application code
 COPY . .
 
 # Expose port
 EXPOSE 8000
 
-# Run the application
-CMD ["python", "main.py"]
+# Make scripts executable
+RUN chmod +x /app/entrypoint.sh
+
+# Create a non-root user and switch to it
+RUN useradd -m appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Set environment variables with safe defaults
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    REDIS_HOST=localhost \
+    REDIS_PORT=6379 \
+    REDIS_URL=redis://localhost:6379/0 \
+    RQ_REDIS_URL=redis://localhost:6379/0 \
+    SOCKETIO_SERVER_URL=http://websocket-server:8001
+
+# Remove the inline entrypoint script creation since we have a separate entrypoint.sh file
+
+# Set the entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# Default command (can be overridden in docker-compose)
+CMD ["api"]

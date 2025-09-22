@@ -1,0 +1,12 @@
+[0;1;31m×[0m redis.service - Redis In-Memory Data Store
+     Loaded: loaded (]8;;file://ecstasy/etc/systemd/system/redis.service\/etc/systemd/system/redis.service]8;;\; [0;1;32menabled[0m; preset: [0;1;38:5:185mdisabled[0m)
+     Active: [0;1;31mfailed[0m (Result: exit-code) since Fri 2025-09-19 12:23:07 IST; 1min 8s ago
+   Duration: 29ms
+ Invocation: 35c635b05f6c4f7c89a86b4d167193a8
+    Process: 53167 ExecStart=/usr/bin/redis-server /etc/redis.conf --supervised systemd [0;1;31m(code=exited, status=1/FAILURE)[0m
+   Main PID: 53167 (code=exited, status=1/FAILURE)
+
+Sep 19 12:23:07 ecstasy systemd[1]: redis.service: Scheduled restart job, restart counter is at 5.
+Sep 19 12:23:07 ecstasy systemd[1]: [0;1;38:5:185m[0;1;39m[0;1;38:5:185mredis.service: Start request repeated too quickly.[0m
+Sep 19 12:23:07 ecstasy systemd[1]: [0;1;38:5:185m[0;1;39m[0;1;38:5:185mredis.service: Failed with result 'exit-code'.[0m
+Sep 19 12:23:07 ecstasy systemd[1]: [0;1;31m[0;1;39m[0;1;31mFailed to start Redis In-Memory Data Store.[0m

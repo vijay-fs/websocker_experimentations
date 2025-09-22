@@ -7,9 +7,15 @@
     "websocket-server"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:websocket\" \"npm run dev:backend\"",
+    "dev": "concurrently --kill-others-on-fail --names 'REDIS,WORKER,WEBSOCKET,BACKEND,FRONTEND' -c 'bgBlue.bold,bgMagenta.bold,bgGreen.bold,bgYellow.bold,bgCyan.bold' \
+      \"redis-server --port 6379\" \
+      \"npm run dev:worker\" \
+      \"npm run dev:websocket\" \
+      \"npm run dev:backend\" \
+      \"npm run dev:frontend\"",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:websocket": "cd websocket-server && npm run dev",
+    "dev:worker": "cd backend && rq worker --url redis://localhost:6379/0 ocr_queue",
     "dev:backend": "cd backend && uv run python -m uvicorn main:app --reload --port 8000",
     "install:all": "yarn install && cd backend && uv sync"
   },

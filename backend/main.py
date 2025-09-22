@@ -1,23 +1,30 @@
 import asyncio
-import uuid
-import os
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
-import socketio
 import json
-import base64
-from io import BytesIO
 import logging
+import uuid
+import hmac
+import hashlib
+import time
+import os
+import base64
+from datetime import datetime
+from contextlib import asynccontextmanager
+from typing import Dict, Any, Optional, List
+from urllib.parse import urlencode
+from io import BytesIO
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+import httpx
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from dotenv import load_dotenv
-
-# Import EasyOCR and image processing libraries
+from rq import Queue
 import easyocr
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
+from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+from app.redis_utils import get_redis, get_async_redis, get_queue, enqueue_job, get_job, cache_result, cache_result_async, get_cached_result, publish_message, publish_message_async, init_redis
+from app.tasks import process_engineering_drawing_task
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,27 +32,88 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="WebSocket Tutorial Backend")
 
+# Minimal CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# In-memory storage
-batch_status_memory: Dict[str, Dict[str, Any]] = {}
+# Simple middleware to add CORS headers
+@app.middleware("http")
+async def add_cors_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
+# Initialize Redis and RQ queue
+redis_client = None
+rq_queue = None
 
 # Initialize EasyOCR reader (supports multiple languages)
 reader = easyocr.Reader(['en'])
 
+# Get Redis host from environment or use 'redis' as default
+REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
+REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
+REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+os.environ['REDIS_URL'] = REDIS_URL
+os.environ['RQ_REDIS_URL'] = REDIS_URL
+
 # Load environment variables
 load_dotenv()
 
-# Get WebSocket server URL from environment variable with default
-SOCKETIO_SERVER_URL = os.getenv("SOCKETIO_SERVER_URL", "http://localhost:8001")
-logger.info(f"Connecting to Socket.IO server at {SOCKETIO_SERVER_URL}")
-sio = socketio.AsyncClient()
+# Set Redis URL if not already set in environment
+if 'REDIS_URL' not in os.environ:
+    os.environ['REDIS_URL'] = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+if 'RQ_REDIS_URL' not in os.environ:
+    os.environ['RQ_REDIS_URL'] = os.environ['REDIS_URL']
+
+# Get Soketi server configuration from environment variables
+SOKETI_SERVER_URL = os.getenv("SOKETI_SERVER_URL", "http://soketi:6001")
+SOKETI_APP_ID = os.getenv("SOKETI_APP_ID", "app-id")
+SOKETI_APP_KEY = os.getenv("SOKETI_APP_KEY", "app-key")
+SOKETI_APP_SECRET = os.getenv("SOKETI_APP_SECRET", "app-secret")
+
+def create_pusher_auth_signature(method: str, path: str, query_string: str = "") -> str:
+    """Create Pusher authentication signature for Soketi HTTP API"""
+    timestamp = str(int(time.time()))
+    
+    # Build query parameters
+    auth_params = {
+        "auth_key": SOKETI_APP_KEY,
+        "auth_timestamp": timestamp,
+        "auth_version": "1.0"
+    }
+    
+    # Add any additional query parameters
+    if query_string:
+        for param in query_string.split('&'):
+            if '=' in param:
+                key, value = param.split('=', 1)
+                auth_params[key] = value
+    
+    # Create query string from sorted parameters
+    query_string = urlencode(sorted(auth_params.items()))
+    
+    # Create string to sign
+    string_to_sign = f"{method}\n{path}\n{query_string}"
+    
+    # Create auth signature
+    signature = hmac.new(
+        SOKETI_APP_SECRET.encode('utf-8'),
+        string_to_sign.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    
+    return f"{query_string}&auth_signature={signature}"
+
+logger.info(f"Connecting to Soketi server at {SOKETI_SERVER_URL}")
+
+# HTTP client for Soketi requests
+http_client = httpx.AsyncClient()
 
 # Constants for retry logic
 MAX_RETRY_ATTEMPTS = 3
@@ -66,7 +134,8 @@ SUPPORTED_EXTENSIONS = [ext for exts in SUPPORTED_IMAGE_FORMATS.values() for ext
 
 class StartProcessRequest(BaseModel):
     process_type: str = "default"
-    parameters: Optional[Dict[str, Any]] = None
+    parameters: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    use_cache: bool = True
 
 class BatchStatusResponse(BaseModel):
     batch_id: str
@@ -80,18 +149,31 @@ class BatchStatusResponse(BaseModel):
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
-def get_batch_status(batch_id: str) -> Optional[Dict[str, Any]]:
-    """Get batch status from in-memory storage"""
-    return batch_status_memory.get(batch_id)
+async def get_batch_status(batch_id: str):
+    """Get batch status from Redis cache"""
+    # First check if we have a cached result
+    cached_status = get_cached_result(f"batch_status:{batch_id}")
+    if cached_status:
+        return cached_status
+    
+    # Check if it's an RQ job
+    job_data = get_job(batch_id)
+    if job_data:
+        return job_data
+    
+    return {"status": "not_found", "message": "Batch ID not found"}
 
-def set_batch_status(batch_id: str, status_data: Dict[str, Any]) -> bool:
-    """Save batch status to in-memory storage"""
-    batch_status_memory[batch_id] = status_data
+async def set_batch_status(batch_id: str, status_data: Dict[str, Any]) -> bool:
+    """Save batch status to Redis"""
+    # Save to Redis
+    await cache_result_async(f"batch_status:{batch_id}", status_data)
     return True
 
-def get_all_batch_ids() -> list:
-    """Get all batch IDs from in-memory storage"""
-    return list(batch_status_memory.keys())
+async def get_all_batch_ids() -> List[str]:
+    """Get all batch IDs from Redis"""
+    # This is a simplified version - in production, you might want to use a Redis set
+    # to track all batch IDs for better performance
+    return []  # Not implemented for Redis in this example
 
 def validate_image_file(file: UploadFile) -> tuple[bool, str]:
     """Validate uploaded image file format and size"""
@@ -126,67 +208,59 @@ def convert_image_format(image_data: bytes, target_format: str = "RGB") -> Image
     except Exception as e:
         raise ValueError(f"Failed to convert image format: {str(e)}")
 
-async def send_to_socketio_with_retry(batch_id: str, message: str, progress: int, result: Optional[Dict[str, Any]] = None, message_type: str = "info"):
-    """Send message to Socket.IO server with retry logic"""
-    for attempt in range(MAX_RETRY_ATTEMPTS):
-        try:
-            # Ensure connection before sending
-            if not sio.connected:
-                logger.info(f"Connecting to Socket.IO server at {SOCKETIO_SERVER_URL} (attempt {attempt + 1})")
-                await sio.connect(SOCKETIO_SERVER_URL)
-                logger.info("Connected to Socket.IO server")
-            
-            data = {
-                "type": "batch_update",
-                "batch_id": batch_id,
-                "message": message,
-                "progress": progress,
-                "timestamp": datetime.now().isoformat(),
-                "message_type": message_type  # info, success, error, warning
-            }
-            
-            if result:
-                data["result"] = result
-            
-            # Log without large image data to avoid terminal flooding
-            log_data = data.copy()
-            if log_data.get("result") and log_data["result"].get("marked_image"):
-                log_data["result"] = {**log_data["result"], "marked_image": f"[BASE64_IMAGE_{len(log_data['result']['marked_image'])}chars]"}
-            logger.info(f"Sending to Socket.IO: {log_data}")
-            await sio.emit('batch_update', data)
-            logger.info(f"Successfully sent batch update for {batch_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to send to Socket.IO server (attempt {attempt + 1}): {e}")
-            if attempt < MAX_RETRY_ATTEMPTS - 1:
-                await asyncio.sleep(RETRY_DELAY * (2 ** attempt))  # Exponential backoff
-            else:
-                logger.error(f"Max retry attempts reached for batch {batch_id}")
-                return False
-    return False
-
-async def send_to_socketio(batch_id: str, message: str, progress: int, result: Optional[Dict[str, Any]] = None, message_type: str = "info"):
-    """Send message to Socket.IO server with improved error handling"""
+async def send_to_soketi(batch_id: str, message: str, progress: int, result: Optional[Dict[str, Any]] = None, message_type: str = "info"):
+    """Send message to Soketi server"""
     try:
-        success = await send_to_socketio_with_retry(batch_id, message, progress, result, message_type)
-        if not success:
-            # Update batch status with error
-            batch_data = get_batch_status(batch_id)
-            if batch_data:
-                batch_data["status"] = "error"
-                batch_data["messages"].append("Failed to send progress update to frontend")
-                batch_data["updated_at"] = datetime.now().isoformat()
-                set_batch_status(batch_id, batch_data)
-        return success
+        data = {
+            "type": "batch_update",
+            "batch_id": batch_id,
+            "message": message,
+            "progress": progress,
+            "timestamp": datetime.utcnow().isoformat(),
+            "message_type": message_type,
+            "result": result
+        }
+        
+        payload = {
+            "name": "batch_update",
+            "channel": f"batch.{batch_id}",
+            "data": data
+        }
+        
+        # Send to Soketi HTTP API with proper Pusher authentication
+        path = f"/apps/{SOKETI_APP_ID}/events"
+        auth_query = create_pusher_auth_signature("POST", path)
+        
+        logger.info(f"🚀 Sending to Soketi: {SOKETI_SERVER_URL}{path}?{auth_query}")
+        logger.info(f"📦 Payload: {json.dumps(payload, indent=2)}")
+        
+        response = await http_client.post(
+            f"{SOKETI_SERVER_URL}{path}?{auth_query}",
+            json=payload,
+            headers={
+                "Content-Type": "application/json"
+            }
+        )
+        
+        logger.info(f"📡 Soketi response status: {response.status_code}")
+        logger.info(f"📡 Soketi response headers: {dict(response.headers)}")
+        logger.info(f"📡 Soketi response body: {response.text}")
+        
+        if response.status_code == 200:
+            logger.info(f"✅ Soketi: batch {batch_id} sent successfully")
+            return True
+        else:
+            logger.error(f"❌ Soketi failed: {response.status_code} - {response.text}")
+            return False
     except Exception as e:
-        logger.error(f"Critical error in send_to_socketio for batch {batch_id}: {e}")
+        logger.error(f"Critical error in send_to_soketi for batch {batch_id}: {e}")
         # Update batch status with error
-        batch_data = get_batch_status(batch_id)
+        batch_data = await get_batch_status(batch_id)
         if batch_data:
             batch_data["status"] = "error"
             batch_data["messages"].append(f"Critical error: {str(e)}")
             batch_data["updated_at"] = datetime.now().isoformat()
-            set_batch_status(batch_id, batch_data)
+            await set_batch_status(batch_id, batch_data)
         return False
 
 async def simulate_long_process(batch_id: str):
@@ -202,15 +276,15 @@ async def simulate_long_process(batch_id: str):
         "Process completed!"
     ]
     
-    # Get current batch status from in-memory storage
-    batch_data = get_batch_status(batch_id)
+    # Get current batch status from Redis
+    batch_data = await get_batch_status(batch_id)
     if not batch_data:
-        print(f"Batch {batch_id} not found in memory")
+        print(f"Batch {batch_id} not found in Redis")
         return
     
     batch_data["status"] = "running"
     batch_data["process_type"] = batch_data.get("process_type", "default")
-    set_batch_status(batch_id, batch_data)
+    await set_batch_status(batch_id, batch_data)
     
     for i, message in enumerate(messages):
         progress = int((i + 1) / len(messages) * 100)
@@ -218,13 +292,13 @@ async def simulate_long_process(batch_id: str):
         batch_data["progress"] = progress
         batch_data["updated_at"] = datetime.now().isoformat()
         
-        # Save updated status to in-memory storage
-        set_batch_status(batch_id, batch_data)
+        # Save updated status to Redis
+        await set_batch_status(batch_id, batch_data)
         
-        await send_to_socketio(batch_id, message, progress, None)
+        await send_to_soketi(batch_id, message, progress, None)
         
         # Check if the process was cancelled or completed
-        updated_batch_data = get_batch_status(batch_id)
+        updated_batch_data = await get_batch_status(batch_id)
         if not updated_batch_data or updated_batch_data.get("status") == "cancelled":
             print(f"Process {batch_id} was cancelled")
             return
@@ -232,246 +306,369 @@ async def simulate_long_process(batch_id: str):
         await asyncio.sleep(2)
     
     batch_data["status"] = "completed"
-    set_batch_status(batch_id, batch_data)
+    await set_batch_status(batch_id, batch_data)
 
-@app.post("/api/start-process")
-async def start_process(request: StartProcessRequest):
+async def start_redis_listener():
+    """Start listening to Redis Pub/Sub channels and forward to Soketi"""
+    try:
+        # Use async Redis client for Pub/Sub
+        redis = get_async_redis()
+        pubsub = redis.pubsub()
+        await pubsub.subscribe("jobs:new", "jobs:update")
+        
+        logger.info("Started Redis Pub/Sub listener")
+        
+        # Run the listener in a background task to avoid blocking startup
+        async def listen_loop():
+            try:
+                async for message in pubsub.listen():
+                    if message["type"] == "message":
+                        channel = message["channel"]
+                        data = json.loads(message["data"]) if isinstance(message["data"], (str, bytes)) else message["data"]
+                        
+                        # Forward relevant messages to Soketi
+                        if channel == "jobs:update" and "batch_id" in data:
+                            logger.info(f"Forwarding job update to Soketi: {data['batch_id']} - {data.get('message')}")
+
+                            # Send to Soketi using HTTP API
+                            payload = {
+                                "name": "batch_update",
+                                "channel": f"batch.{data['batch_id']}",
+                                "data": {
+                                    "type": "batch_update",
+                                    "batch_id": data["batch_id"],
+                                    "message": data.get("message", "Processing..."),
+                                    "progress": data.get("progress", 0),
+                                    "timestamp": datetime.utcnow().isoformat(),
+                                    "message_type": data.get("message_type", "info"),
+                                    "result": data.get("result")
+                                }
+                            }
+                            
+                            try:
+                                # Try multiple approaches to ensure event delivery
+                                
+                                # 1. Direct Redis pub/sub to Soketi adapter
+                                redis_adapter = get_async_redis()
+                                
+                                # Format for Soketi Redis adapter
+                                soketi_redis_message = {
+                                    "event": "batch_update",
+                                    "data": json.dumps({
+                                        "type": "batch_update",
+                                        "batch_id": data["batch_id"],
+                                        "message": data.get("message", "Processing..."),
+                                        "progress": data.get("progress", 0),
+                                        "timestamp": datetime.utcnow().isoformat(),
+                                        "message_type": data.get("message_type", "info"),
+                                        "result": data.get("result")
+                                    }),
+                                    "channel": f"batch.{data['batch_id']}"
+                                }
+                                
+                                # Publish to multiple Redis channels for Soketi
+                                channels_to_try = [
+                                    f"soketi:app-id:channel:batch.{data['batch_id']}",
+                                    f"soketi:app:{SOKETI_APP_ID}:channel:batch.{data['batch_id']}",
+                                    f"pusher:batch.{data['batch_id']}",
+                                    f"batch.{data['batch_id']}"
+                                ]
+                                
+                                for channel in channels_to_try:
+                                    await redis_adapter.publish(channel, json.dumps(soketi_redis_message))
+                                
+                                logger.info(f"✅ Redis->Soketi (multiple channels): batch {data['batch_id']} published")
+                                
+                                # 2. HTTP API with authentication
+                                path = f"/apps/{SOKETI_APP_ID}/events"
+                                auth_query = create_pusher_auth_signature("POST", path)
+                                
+                                response = await http_client.post(
+                                    f"{SOKETI_SERVER_URL}{path}?{auth_query}",
+                                    json=payload,
+                                    headers={
+                                        "Content-Type": "application/json"
+                                    }
+                                )
+                                
+                                logger.info(f"📡 HTTP API: {response.status_code} - {response.text[:100]}")
+                                
+                            except Exception as e:
+                                logger.error(f"Error sending to Soketi: {str(e)}")
+                                
+            except Exception as e:
+                logger.error(f"Error in Redis Pub/Sub listener: {str(e)}")
+        
+        # Start the listener as a background task
+        asyncio.create_task(listen_loop())
+        
+    except Exception as e:
+        logger.error(f"Failed to start Redis Pub/Sub listener: {str(e)}")
+        # Don't raise here to prevent blocking startup
+
+@app.post("/api/process/start")
+async def start_process(
+    request: StartProcessRequest,
+    background_tasks: BackgroundTasks
+):
+    """Start a new processing batch"""
     batch_id = str(uuid.uuid4())
     
-    batch_data = {
+    # Check cache first if enabled
+    cache_key = None
+    if request.use_cache and request.parameters and "image_hash" in request.parameters:
+        cache_key = f"ocr_result:{request.parameters['image_hash']}"
+        cached_result = get_cached_result(cache_key)
+        if cached_result:
+            return {"batch_id": "cached_" + str(uuid.uuid4())[:8], "status": "completed", "cached": True, "result": cached_result}
+    
+    # Initialize batch status
+    status_data = {
         "batch_id": batch_id,
-        "status": "initialized",
+        "status": "queued",
         "progress": 0,
-        "messages": [],
-        "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat(),
+        "messages": ["Batch created and queued for processing"],
+        "created_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
         "process_type": request.process_type,
         "parameters": request.parameters or {}
     }
     
-    # Save to in-memory storage
-    if not set_batch_status(batch_id, batch_data):
-        raise HTTPException(status_code=500, detail="Failed to save batch status")
+    # Save initial status to Redis
+    await set_batch_status(batch_id, status_data)
     
-    asyncio.create_task(simulate_long_process(batch_id))
-    
-    return {"batch_id": batch_id, "status": "initialized"}
-
-@app.get("/api/batch-status/{batch_id}", response_model=BatchStatusResponse)
-async def get_batch_status_endpoint(batch_id: str):
-    batch_data = get_batch_status(batch_id)
-    if not batch_data:
-        raise HTTPException(status_code=404, detail="Batch ID not found")
-    
-    return batch_data
-
-async def process_engineering_drawing(batch_id: str, image_data: bytes):
-    """Process engineering drawing with comprehensive error handling and progress updates"""
-    try:
-        # Get current batch status from in-memory storage
-        batch_data = get_batch_status(batch_id)
-        if not batch_data:
-            await send_to_socketio(batch_id, "Error: Batch not found", 0, None, "error")
-            return False
+    # For immediate processing (synchronous)
+    if request.process_type == "immediate":
+        background_tasks.add_task(simulate_long_process, batch_id)
+    # For background processing (asynchronous)
+    else:
+        # Enqueue the job with RQ
+        job = enqueue_job(
+            process_engineering_drawing_task,
+            batch_id=batch_id,
+            image_data_base64=request.parameters.get("image_data"),
+            process_type=request.process_type,
+            parameters=request.parameters,
+            job_id=batch_id
+        )
         
-        batch_data["status"] = "running"
-        set_batch_status(batch_id, batch_data)
-        
-        # Send initial progress update
-        await send_to_socketio(batch_id, "Starting image processing...", 5, None, "info")
-        await asyncio.sleep(1)
-        
-        # Validate and convert image
-        await send_to_socketio(batch_id, "Validating and converting image...", 10, None, "info")
-        await asyncio.sleep(1)
-        
-        try:
-            image = convert_image_format(image_data, "RGB")
-        except ValueError as e:
-            await send_to_socketio(batch_id, f"Image conversion failed: {str(e)}", 100, None, "error")
-            return False
-        
-        # Convert PIL Image to numpy array for EasyOCR
-        await send_to_socketio(batch_id, "Preparing image for OCR analysis...", 20, None, "info")
-        await asyncio.sleep(1)
-        image_np = np.array(image)
-        
-        # Perform OCR with EasyOCR
-        await send_to_socketio(batch_id, "Performing OCR analysis with EasyOCR...", 40, None, "info")
-        
-        try:
-            results = reader.readtext(image_np)
-            await send_to_socketio(batch_id, "OCR analysis completed successfully!", 50, None, "info")
-        except Exception as e:
-            await send_to_socketio(batch_id, f"OCR analysis failed: {str(e)}", 100, None, "error")
-            return False
-        
-        # Process and mark detected text
-        await send_to_socketio(batch_id, "Processing detected text and creating annotations...", 60, None, "info")
-        await asyncio.sleep(1)
-        
-        marked_image = image.copy()
-        draw = ImageDraw.Draw(marked_image)
-        
-        detected_symbols = []
-        for (bbox, text, confidence) in results:
-            if confidence > 0.3:  # Lower threshold for better detection
-                # Draw rectangle around detected text
-                (top_left, top_right, bottom_right, bottom_left) = bbox
-                top_left_int = (int(top_left[0]), int(top_left[1]))
-                top_right_int = (int(top_right[0]), int(top_right[1]))
-                bottom_right_int = (int(bottom_right[0]), int(bottom_right[1]))
-                bottom_left_int = (int(bottom_left[0]), int(bottom_left[1]))
-                
-                # Draw bounding box
-                draw.polygon([top_left_int, top_right_int, bottom_right_int, bottom_left_int], outline="red", width=2)
-                
-                # Add text label with background
-                text_bbox = draw.textbbox((0, 0), text)
-                text_width = text_bbox[2] - text_bbox[0]
-                text_height = text_bbox[3] - text_bbox[1]
-                
-                label_pos = (top_left_int[0], max(0, top_left_int[1] - text_height - 5))
-                draw.rectangle([label_pos, (label_pos[0] + text_width + 4, label_pos[1] + text_height + 4)], fill="red")
-                draw.text((label_pos[0] + 2, label_pos[1] + 2), text, fill="white")
-                
-                detected_symbols.append({
-                    "text": text.strip(),
-                    "confidence": float(confidence),
-                    "bbox": {
-                        "top_left": top_left_int,
-                        "top_right": top_right_int,
-                        "bottom_right": bottom_right_int,
-                        "bottom_left": bottom_left_int
-                    }
-                })
-        
-
-        buffered = BytesIO()
-        # Use of JPEG with quality optimization for smaller file size
-        marked_image.save(buffered, format="JPEG", quality=85, optimize=True)
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-        
-        logger.info(f"Compressed image size: {len(img_str)} characters ({len(img_str)/1024:.1f}KB)")
-        
-        await send_to_socketio(batch_id, "Finalizing results...", 95, None, "info")
-        await asyncio.sleep(1)
-        
-        # Prepare final result
-        result_data = {
-            "detected_symbols": detected_symbols,
-            "marked_image": img_str,
-            "symbol_count": len(detected_symbols),
-            "processing_stats": {
-                "total_detections": len(results),
-                "high_confidence_detections": len(detected_symbols),
-                "image_dimensions": f"{marked_image.width}x{marked_image.height}",
-                "original_dimensions": f"{image.width}x{image.height}",
-                "processing_time": datetime.now().isoformat(),
-                "compressed_size_kb": round(len(img_str)/1024, 1)
-            }
-        }
-        
-        # Send completion message with success toast
-        completion_message = f"✅ Processing complete! Detected {len(detected_symbols)} text elements with high confidence."
-        await send_to_socketio(batch_id, completion_message, 100, result_data, "success")
-        
-        # Update batch status
-        batch_data = get_batch_status(batch_id)
-        if batch_data:
-            batch_data["status"] = "completed"
-            batch_data["progress"] = 100
-            batch_data["messages"].append(completion_message)
-            batch_data["result"] = result_data
-            batch_data["updated_at"] = datetime.now().isoformat()
-            set_batch_status(batch_id, batch_data)
-            
-        return True
-        
-    except Exception as e:
-        error_msg = f"❌ Critical error during image processing: {str(e)}"
-        print(f"Error in process_engineering_drawing: {e}")
-        
-        # Send error notification
-        await send_to_socketio(batch_id, error_msg, 100, None, "error")
-        
-        # Update batch status with error
-        batch_data = get_batch_status(batch_id)
-        if batch_data:
-            batch_data["status"] = "error"
-            batch_data["messages"].append(error_msg)
-            batch_data["updated_at"] = datetime.now().isoformat()
-            set_batch_status(batch_id, batch_data)
-        
-        return False
-
-@app.post("/api/upload-drawing")
-async def upload_drawing(file: UploadFile = File(...)):
-    """Upload and process engineering drawing with comprehensive validation"""
-    try:
-        # Validate file
-        is_valid, validation_message = validate_image_file(file)
-        if not is_valid:
-            raise HTTPException(status_code=400, detail=validation_message)
-        
-        # Read and validate file contents
-        contents = await file.read()
-        if len(contents) == 0:
-            raise HTTPException(status_code=400, detail="Empty file uploaded")
-        
-        # Check file size (max 10MB)
-        max_size = 10 * 1024 * 1024  # 10MB
-        if len(contents) > max_size:
-            raise HTTPException(status_code=400, detail=f"File too large. Maximum size: {max_size // (1024*1024)}MB")
-        
-        # Generate unique batch ID
-        batch_id = str(uuid.uuid4())
-        
-        # Initialize batch status
-        batch_data = {
+        # Publish an event that a new job was queued
+        publish_message("jobs:new", {
             "batch_id": batch_id,
-            "status": "initialized",
-            "progress": 0,
-            "messages": [],
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-            "process_type": "image_processing",
-            "parameters": {
-                "filename": file.filename,
-                "content_type": file.content_type,
-                "file_size": len(contents),
-                "file_size_mb": round(len(contents) / (1024*1024), 2)
-            }
-        }
+            "status": "queued",
+            "timestamp": datetime.utcnow().isoformat()
+        })
         
-        # Save to in-memory storage
-        if not set_batch_status(batch_id, batch_data):
-            raise HTTPException(status_code=500, detail="Failed to initialize processing batch")
-        
-        # Start processing immediately
-        asyncio.create_task(process_engineering_drawing(batch_id, contents))
-        
-        return {
-            "batch_id": batch_id, 
-            "status": "initialized",
-            "message": f"✅ File '{file.filename}' uploaded successfully. Processing started.",
-            "file_info": {
-                "name": file.filename,
-                "size": f"{batch_data['parameters']['file_size_mb']}MB",
-                "type": file.content_type
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        # Return initial response
+        return {"batch_id": batch_id, "status": "queued"}
 
-@app.get("/api/health")
+@app.get("/api/batch-status/{batch_id}")
+async def get_batch_status_endpoint(batch_id: str):
+    """Get the current status of a batch process"""
+    try:
+        status = await get_batch_status(batch_id)
+        if status and status.get("status") != "not_found":
+            # Check if we have cached result with image
+            cached_result = get_cached_result(f"batch_result:{batch_id}")
+            if cached_result and cached_result.get("marked_image"):
+                status["result"] = cached_result
+            return status
+        else:
+            raise HTTPException(status_code=404, detail="Batch not found")
+    except Exception as e:
+        logger.error(f"Error getting batch status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/upload")
+async def upload_drawing(
+    file: UploadFile = File(...),
+    use_cache: bool = True,
+    background_tasks: BackgroundTasks = None
+):
+    """Upload and process engineering drawing with comprehensive validation"""
+    # Validate file
+    is_valid, error_message = validate_image_file(file)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_message)
+    
+    # Read file content
+    try:
+        image_data = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading file: {str(e)}")
+    
+    # Generate a unique batch ID
+    batch_id = str(uuid.uuid4())
+    
+    # Create image hash for caching
+    import hashlib
+    image_hash = hashlib.md5(image_data).hexdigest()
+    
+    # Check cache first if enabled
+    cache_key = f"ocr_result:{image_hash}"
+    if use_cache:
+        cached_result = get_cached_result(cache_key)
+        if cached_result:
+            return {
+                "batch_id": "cached_" + str(uuid.uuid4())[:8],
+                "status": "completed",
+                "cached": True,
+                "result": cached_result
+            }
+    
+    # Initialize batch status
+    status_data = {
+        "batch_id": batch_id,
+        "status": "queued",
+        "progress": 0,
+        "messages": ["File uploaded and queued for processing"],
+        "created_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
+        "process_type": "engineering_drawing",
+        "file_name": file.filename,
+        "file_size": len(image_data),
+        "content_type": file.content_type,
+        "image_hash": image_hash
+    }
+    
+    # Save initial status
+    await set_batch_status(batch_id, status_data)
+    
+    try:
+        # Convert image to base64 for the task
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        # Enqueue the job with RQ
+        job = enqueue_job(
+            process_engineering_drawing_task,
+            batch_id=batch_id,
+            image_data_base64=image_base64,
+            process_type="engineering_drawing",
+            parameters={
+                "file_name": file.filename,
+                "file_size": len(image_data),
+                "content_type": file.content_type,
+                "image_hash": image_hash
+            },
+            job_id=batch_id
+        )
+        
+        # Publish an event that a new job was queued
+        await publish_message_async("jobs:new", {
+            "batch_id": batch_id,
+            "status": "queued",
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        
+        # Return initial response
+        return {
+            "batch_id": batch_id,
+            "status": "queued",
+            "message": "File uploaded and queued for processing"
+        }
+        
+    except Exception as e:
+        # Update status with error
+        error_status = {
+            "status": "failed",
+            "progress": 0,
+            "message": f"Error queuing job: {str(e)}",
+            "error": str(e),
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        await set_batch_status(batch_id, {**status_data, **error_status})
+        
+        # Re-raise the exception with HTTP 500
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/test-soketi/{batch_id}")
+async def test_soketi_event(batch_id: str):
+    """Manual test endpoint to trigger Soketi events"""
+    success = await send_to_soketi(
+        batch_id=batch_id,
+        message="Manual test event from API",
+        progress=50,
+        message_type="info"
+    )
+    return {"success": success, "batch_id": batch_id, "message": "Test event sent"}
+
+@app.get("/api/health", response_model=Dict[str, Any])
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    """Health check endpoint with detailed status"""
+    status = {
+        "status": "ok",
+        "timestamp": datetime.utcnow().isoformat(),
+        "services": {
+            "redis": False,
+            "soketi": False,
+            "api": True
+        },
+        "details": {}
+    }
+    
+    # Check Redis connection
+    try:
+        redis_ok = get_redis().ping()
+        status["services"]["redis"] = redis_ok
+        status["details"]["redis"] = "Connected" if redis_ok else "Connection failed"
+    except Exception as e:
+        status["details"]["redis_error"] = str(e)
+    
+    # Check RQ connection
+    try:
+        rq_ok = get_queue().connection.ping()
+        status["services"]["rq"] = rq_ok
+        status["details"]["rq"] = "Connected" if rq_ok else "Connection failed"
+    except Exception as e:
+        status["details"]["rq_error"] = str(e)
+    # Check Soketi connection
+    try:
+        response = await http_client.get(f"{SOKETI_SERVER_URL}")
+        if response.status_code == 200:
+            status["services"]["soketi"] = True
+            status["details"]["soketi"] = "Connected"
+        else:
+            status["details"]["soketi_error"] = response.text
+    except Exception as e:
+        status["details"]["soketi_error"] = str(e)
+    
+    # If any critical service is down, mark status as error
+    if not all(status["services"].values()):
+        status["status"] = "error"
+    
+    return status
+
+# Start the Soketi client when the app starts
+@app.on_event("startup")
+async def startup_event():
+    # Initialize Redis with retry logic
+    max_retries = 5
+    retry_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # Initialize Redis with the correct URL
+            init_redis()
+            redis = get_redis()
+            redis.ping()
+            
+            # Initialize RQ queue
+            global rq_queue
+            rq_queue = get_queue()
+            
+            logger.info(f"Successfully connected to Redis at {REDIS_URL}")
+            logger.info("RQ queue initialized successfully")
+            break
+        except Exception as e:
+            if attempt == max_retries - 1:
+                logger.error(f"Failed to connect to Redis at {REDIS_URL} after {max_retries} attempts: {str(e)}")
+                raise
+            logger.warning(f"Attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
+            await asyncio.sleep(retry_delay)
+
+    # Start Redis Pub/Sub listener in the background
+    asyncio.create_task(start_redis_listener())
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-    
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

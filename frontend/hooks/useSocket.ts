@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { io, Socket } from 'socket.io-client';
+import Pusher from 'pusher-js';
 
 interface BatchProgress {
   batchId: string;
@@ -31,8 +31,8 @@ interface BatchProgress {
   }; // Optional result data for image processing
 }
 
-interface UseSocketReturn {
-  socket: Socket | null;
+interface UsePusherReturn {
+  pusher: Pusher | null;
   isConnected: boolean;
   subscribeToProcess: (batchId: string) => void;
   unsubscribeFromProcess: (batchId: string) => void;
@@ -41,126 +41,156 @@ interface UseSocketReturn {
   error: string | null;
 }
 
-export const useSocket = (serverUrl: string = 'http://localhost:8001'): UseSocketReturn => {
- const [socket, setSocket] = useState<Socket | null>(null);
+export const useSocket = (): UsePusherReturn => {
+  const [pusher, setPusher] = useState<Pusher | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [batchProgressMap, setBatchProgressMap] = useState<Map<string, BatchProgress>>(new Map());
   const [activeSubscriptions, setActiveSubscriptions] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const reconnectAttempts = useRef(0);
-  const maxReconnectAttempts = 5;
+  const channelsRef = useRef<Map<string, any>>(new Map());
   // Create a ref to track the last processed batch progress to prevent unnecessary updates
   const lastBatchProgressRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
-    const socketInstance = io(serverUrl, {
-      autoConnect: true,
-      reconnection: true,
-      reconnectionAttempts: maxReconnectAttempts,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 20000,
-    });
-
-    socketInstance.on('connect', () => {
-      console.log('Connected to Socket.IO server');
-      setIsConnected(true);
-      setError(null);
-      reconnectAttempts.current = 0;
-    });
-
-    socketInstance.on('disconnect', (reason) => {
-      console.log('Disconnected from Socket.IO server:', reason);
-      setIsConnected(false);
-      
-      if (reason === 'io server disconnect') {
-        socketInstance.connect();
+    // Get Pusher configuration from environment variables
+    const pusherHost = process.env.NEXT_PUBLIC_PUSHER_HOST || 'localhost';
+    const pusherPort = parseInt(process.env.NEXT_PUBLIC_PUSHER_PORT || '6001');
+    const pusherScheme = process.env.NEXT_PUBLIC_PUSHER_SCHEME || 'ws';
+    const pusherKey = process.env.NEXT_PUBLIC_PUSHER_APP_KEY || 'app-key';
+    
+    console.log('🔧 Pusher config:', {
+      key: pusherKey,
+      host: pusherHost,
+      port: pusherPort,
+      scheme: pusherScheme,
+      forceTLS: false,
+      env: process.env.NODE_ENV,
+      allEnvVars: {
+        NEXT_PUBLIC_PUSHER_HOST: process.env.NEXT_PUBLIC_PUSHER_HOST,
+        NEXT_PUBLIC_PUSHER_PORT: process.env.NEXT_PUBLIC_PUSHER_PORT,
+        NEXT_PUBLIC_PUSHER_APP_KEY: process.env.NEXT_PUBLIC_PUSHER_APP_KEY
       }
     });
-
-    socketInstance.on('connect_error', (error) => {
-      console.error('Connection error:', error);
-      reconnectAttempts.current++;
-      
-      if (reconnectAttempts.current >= maxReconnectAttempts) {
-        setError(`Failed to connect after ${maxReconnectAttempts} attempts. Please check if the server is running.`);
-      } else {
-        setError(`Connection attempt ${reconnectAttempts.current}/${maxReconnectAttempts} failed. Retrying...`);
-      }
+    
+    const pusherInstance = new Pusher(pusherKey, {
+      wsHost: pusherHost,
+      wsPort: pusherPort,
+      forceTLS: false,
+      disableStats: true,
+      enabledTransports: ['ws', 'wss'],
+      cluster: 'mt1' // Required by Pusher.js but ignored by Soketi
     });
 
-    socketInstance.on('batch_progress', (data: BatchProgress) => {
-      // Create a unique key for this progress update
-      const progressKey = `${data.batchId}-${data.timestamp}-${data.progress}`;
-      const lastProgressKey = lastBatchProgressRef.current.get(data.batchId);
+    const handleConnectionStateChange = (state: string) => {
+      console.log('🔗 Pusher connection state changed:', state);
+      setIsConnected(state === 'connected');
       
-      // Skip if we've already processed this exact progress update
-      if (lastProgressKey === progressKey) {
+      if (state === 'disconnected' || state === 'failed') {
+        setError('WebSocket connection lost. Attempting to reconnect...');
+      } else if (state === 'connected') {
+        setError(null);
+        console.log('✅ Pusher connected successfully');
+      }
+    };
+
+    pusherInstance.connection.bind('connected', () => handleConnectionStateChange('connected'));
+    pusherInstance.connection.bind('disconnected', () => handleConnectionStateChange('disconnected'));
+    pusherInstance.connection.bind('failed', () => handleConnectionStateChange('failed'));
+
+    pusherInstance.connection.bind('error', (error: any) => {
+      console.error('Pusher connection error:', error);
+      setError(`Connection error: ${error.message || 'Unknown error'}`);
+    });
+
+    pusherInstance.connection.bind('unavailable', () => {
+      console.error('Pusher connection unavailable');
+      setError('Connection unavailable. Please check if the server is running.');
+    });
+
+    setPusher(pusherInstance);
+
+    return () => {
+      // Unsubscribe from all channels
+      channelsRef.current.forEach((channel, channelName) => {
+        pusherInstance.unsubscribe(channelName);
+      });
+      channelsRef.current.clear();
+      pusherInstance.disconnect();
+    };
+  }, []);
+
+  const subscribeToProcess = useCallback((batchId: string) => {
+    if (pusher) {
+      const channelName = `batch.${batchId}`;
+      console.log(`🔔 Frontend subscribing to channel ${channelName}`);
+      console.log(`🔗 Pusher connection state: ${pusher.connection.state}`);
+      
+      // Check if already subscribed
+      if (channelsRef.current.has(channelName)) {
+        console.log(`Already subscribed to ${channelName}`);
         return;
       }
       
-      lastBatchProgressRef.current.set(data.batchId, progressKey);
+      const channel = pusher.subscribe(channelName);
+      channelsRef.current.set(channelName, channel);
       
-      // Enhanced logging with message type icons
-      const messageIcon = {
-        'success': '✅',
-        'error': '❌', 
-        'warning': '⚠️',
-        'info': 'ℹ️'
-      }[data.messageType || 'info'] || 'ℹ️';
+      console.log(`✅ Successfully subscribed to ${channelName}`);
       
-      console.log(`${messageIcon} Frontend received batch progress:`, {
-        batchId: data.batchId,
-        message: data.message,
-        progress: data.progress,
-        messageType: data.messageType,
-        timestamp: data.timestamp,
-        hasResult: !!data.result,
-        hasImage: !!(data.result && data.result.marked_image),
-        imageSize: data.result?.marked_image?.length || 0
-      });
-      
-      setBatchProgressMap(prev => {
-        const newMap = new Map(prev);
-        newMap.set(data.batchId, data);
-        return newMap;
-      });
-    });
-
- socketInstance.on('reconnect', () => {
-      console.log('Reconnected to Socket.IO server');
-      setError(null);
-      reconnectAttempts.current = 0;
-      
-      // Resubscribe to all active batches
-      // Use a small delay to ensure the connection is fully established
-      setTimeout(() => {
-        activeSubscriptions.forEach(batchId => {
-          console.log(`Resubscribing to batch ${batchId} after reconnection`);
-          if (socketInstance.connected) {
-            socketInstance.emit('subscribe_to_batch', batchId);
-          }
+      // Bind to ALL possible events to debug what's being received
+      channel.bind_global((eventName: string, data: any) => {
+        console.log(`🌍 GLOBAL EVENT RECEIVED: ${eventName}`, JSON.stringify(data, null, 2));
+        console.log(`🌍 Event timestamp: ${new Date().toISOString()}`);
+        console.log(`🌍 Channel: ${channelName}`);
+        
+        // Store in window for inspection
+        if (!(window as any).__allEvents) (window as any).__allEvents = [];
+        (window as any).__allEvents.push({
+          timestamp: new Date().toISOString(),
+          channel: channelName,
+          event: eventName,
+          data: data
         });
-      }, 100);
-    });
+      });
+      
+      channel.bind('batch_update', (data: any) => {
+        console.log('📨 RAW Received update:', JSON.stringify(data, null, 2));
+        (window as any).__lastBatchUpdate = data;
+        // Extract data from nested structure if needed
+        const updateData = data.data || data;
+        console.log('📨 PROCESSED update data:', JSON.stringify(updateData, null, 2));
 
-    socketInstance.on('reconnect_failed', () => {
-      console.error('Failed to reconnect to Socket.IO server');
-      setError('Failed to reconnect to server. Please refresh the page.');
-    });
+        // Show a toast for every update
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('OCRBatchUpdate', { detail: updateData }));
+        }
 
-    setSocket(socketInstance);
+        const batchProgress: BatchProgress = {
+          batchId: updateData.batch_id || data.batch_id,
+          message: updateData.message || 'Processing...',
+          timestamp: updateData.timestamp || new Date().toISOString(),
+          progress: updateData.progress || 0,
+          messageType: updateData.message_type || 'info',
+          result: updateData.result
+        };
 
-    return () => {
-      socketInstance.disconnect();
-    };
-  }, [serverUrl]);
+        console.log(`✅ Update for batch ${batchProgress.batchId}: ${batchProgress.progress}% - ${batchProgress.message}`);
 
- const subscribeToProcess = useCallback((batchId: string) => {
-    if (socket && isConnected) {
-      console.log(`Frontend subscribing to batch ${batchId}`);
-      socket.emit('subscribe_to_batch', batchId);
-      console.log(`Subscription request sent for batch ${batchId}`);
+        setBatchProgressMap(prev => {
+          const newMap = new Map(prev);
+          newMap.set(batchProgress.batchId, batchProgress);
+          console.log('🗺️ batchProgressMap updated:', Array.from(newMap.entries()));
+          return newMap;
+        });
+      });
+      
+      channel.bind('pusher:subscription_succeeded', () => {
+        console.log(`Successfully subscribed to ${channelName}`);
+      });
+      
+      channel.bind('pusher:subscription_error', (error: any) => {
+        console.error(`Failed to subscribe to ${channelName}:`, error);
+        setError(`Failed to subscribe to batch ${batchId}`);
+      });
       
       // Track active subscription
       setActiveSubscriptions(prev => {
@@ -169,15 +199,21 @@ export const useSocket = (serverUrl: string = 'http://localhost:8001'): UseSocke
         return newSet;
       });
     } else {
-      console.error('Cannot subscribe: Socket not connected. Connected:', isConnected, 'Socket:', !!socket);
-      setError('Cannot subscribe: Socket not connected');
+      console.error('Cannot subscribe: Pusher not available. Connected:', isConnected, 'Pusher:', !!pusher);
+      // Don't set error - allow subscription to work when pusher becomes available
     }
-  }, [socket, isConnected]);
+  }, [pusher, isConnected]);
 
   const unsubscribeFromProcess = useCallback((batchId: string) => {
-    if (socket && isConnected) {
-      console.log(`Unsubscribing from batch ${batchId}`);
-      socket.emit('unsubscribe_from_batch', batchId);
+    if (pusher) {
+      const channelName = `batch.${batchId}`;
+      console.log(`Unsubscribing from channel ${channelName}`);
+      
+      const channel = channelsRef.current.get(channelName);
+      if (channel) {
+        pusher.unsubscribe(channelName);
+        channelsRef.current.delete(channelName);
+      }
       
       // Remove from active subscriptions
       setActiveSubscriptions(prev => {
@@ -186,10 +222,10 @@ export const useSocket = (serverUrl: string = 'http://localhost:8001'): UseSocke
         return newSet;
       });
     }
-  }, [socket, isConnected]);
+  }, [pusher]);
 
   return {
-    socket,
+    pusher,
     isConnected,
     subscribeToProcess,
     unsubscribeFromProcess,
