@@ -25,17 +25,9 @@ const Toast = ({ message, type, onClose }: ToastProps) => {
     info: 'bg-blue-500'
   }[type];
 
-  const icon = {
-    success: '✅',
-    error: '❌',
-    warning: '⚠️',
-    info: 'ℹ️'
-  }[type];
-
   return (
     <div className={`fixed top-4 right-4 ${bgColor} text-white px-4 py-3 rounded-lg shadow-lg z-50 max-w-sm`}>
       <div className="flex items-center gap-2">
-        <span>{icon}</span>
         <span className="flex-1">{message}</span>
         <button onClick={onClose} className="ml-2 text-white hover:text-gray-200">×</button>
       </div>
@@ -77,7 +69,7 @@ export default function Home() {
 
   // Handle real-time updates
   useEffect(() => {
-    console.log('🔍 [page.tsx] batchProgressMap changed:', Array.from(batchProgressMap.entries()));
+    console.log('batchProgressMap changed:', Array.from(batchProgressMap.entries()));
     batchProgressMap.forEach((progress, batchId) => {
       console.log(`Update for ${batchId}: ${progress.progress}%`);
       
@@ -114,12 +106,12 @@ export default function Home() {
       
       // Only fetch batch status as fallback if Pusher connection was lost
       if (progress.progress === 100 && !isConnected) {
-        console.log(`🔄 Pusher disconnected, fetching final status for ${batchId}`);
+        console.log(`Pusher disconnected, fetching final status for ${batchId}`);
         setTimeout(() => {
           fetch(`http://localhost:8000/api/batch-status/${batchId}`)
             .then(response => response.ok ? response.json() : Promise.reject('Failed'))
             .then(data => {
-              console.log(`📦 Fallback data fetched for ${batchId}:`, data);
+              console.log(`Fallback data fetched for ${batchId}:`, data);
               setActiveProcesses(prev => {
                 const newMap = new Map(prev);
                 const process = newMap.get(batchId);
