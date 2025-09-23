@@ -93,8 +93,10 @@ export default function Home() {
           batch_id: batchId,
           status: progress.progress === 100 ? 'completed' : 'running',
           progress: progress.progress,
-          messages: existing?.status.messages ? 
-            [...existing.status.messages.filter(msg => msg !== progress.message), progress.message] : 
+          messages: existing?.status.messages ?
+            (existing.status.messages.includes(progress.message) ?
+              existing.status.messages :
+              [...existing.status.messages, progress.message]) :
             [progress.message],
           created_at: existing?.status.created_at || new Date().toISOString(),
           updated_at: progress.timestamp,
@@ -110,27 +112,27 @@ export default function Home() {
         return newMap;
       });
       
-      // Fetch full result when completed
-      if (progress.progress === 100) {
+      // Only fetch batch status as fallback if Pusher connection was lost
+      if (progress.progress === 100 && !isConnected) {
+        console.log(`🔄 Pusher disconnected, fetching final status for ${batchId}`);
         setTimeout(() => {
           fetch(`http://localhost:8000/api/batch-status/${batchId}`)
             .then(response => response.ok ? response.json() : Promise.reject('Failed'))
             .then(data => {
-              if (data.result?.marked_image) {
-                setActiveProcesses(prev => {
-                  const newMap = new Map(prev);
-                  const process = newMap.get(batchId);
-                  if (process) {
-                    newMap.set(batchId, {
-                      ...process,
-                      status: { ...process.status, result: data.result }
-                    });
-                  }
-                  return newMap;
-                });
-              }
+              console.log(`📦 Fallback data fetched for ${batchId}:`, data);
+              setActiveProcesses(prev => {
+                const newMap = new Map(prev);
+                const process = newMap.get(batchId);
+                if (process && data.result) {
+                  newMap.set(batchId, {
+                    ...process,
+                    status: { ...process.status, result: data.result }
+                  });
+                }
+                return newMap;
+              });
             })
-            .catch(error => console.error(`Failed to fetch result for ${batchId}:`, error));
+            .catch(error => console.warn(`Fallback fetch failed for ${batchId}:`, error));
         }, 1000);
       }
     });
@@ -299,11 +301,24 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Progress Bar */}
+              {/* Enhanced Progress Bar with Stages */}
               <div className="mb-4">
-                <div className="w-full bg-gray-200 rounded-full h-3">
-                  <div 
-                    className={`h-3 rounded-full transition-all duration-300 ${
+                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                  <span>Validation</span>
+                  <span>Processing</span>
+                  <span>OCR</span>
+                  <span>Complete</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-3 relative">
+                  {/* Stage markers */}
+                  <div className="absolute top-0 h-3 w-px bg-gray-300" style={{ left: '10%' }}></div>
+                  <div className="absolute top-0 h-3 w-px bg-gray-300" style={{ left: '30%' }}></div>
+                  <div className="absolute top-0 h-3 w-px bg-gray-300" style={{ left: '60%' }}></div>
+                  <div className="absolute top-0 h-3 w-px bg-gray-300" style={{ left: '90%' }}></div>
+
+                  {/* Progress fill */}
+                  <div
+                    className={`h-3 rounded-full transition-all duration-500 ease-out ${
                       process.status.status === 'completed' ? 'bg-green-500' :
                       process.status.status === 'failed' ? 'bg-red-500' :
                       'bg-blue-500'
@@ -311,13 +326,47 @@ export default function Home() {
                     style={{ width: `${Math.max(process.status.progress, 0)}%` }}
                   ></div>
                 </div>
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>0%</span>
+                  <span>25%</span>
+                  <span>50%</span>
+                  <span>75%</span>
+                  <span>100%</span>
+                </div>
               </div>
 
-              {/* Current Message */}
+              {/* Current Message with Enhanced Display */}
               <div className="mb-4">
-                <div className="text-sm font-medium text-gray-900">
-                  {process.status.messages[process.status.messages.length - 1] || 'Processing...'}
+                <div className="text-sm font-medium text-gray-900 mb-2">
+                  Current Step: {process.status.messages[process.status.messages.length - 1] || 'Processing...'}
                 </div>
+
+                {/* Progress Steps Timeline */}
+                {process.status.messages.length > 1 && (
+                  <details className="mt-3">
+                    <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                      View All Progress Steps ({process.status.messages.length})
+                    </summary>
+                    <div className="mt-2 bg-gray-50 rounded p-3 max-h-32 overflow-y-auto">
+                      {process.status.messages.map((message, index) => (
+                        <div key={index} className="flex items-center gap-2 py-1 text-xs">
+                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            index === process.status.messages.length - 1
+                              ? 'bg-blue-500 animate-pulse'
+                              : 'bg-green-400'
+                          }`}></div>
+                          <span className={`${
+                            index === process.status.messages.length - 1
+                              ? 'text-gray-900 font-medium'
+                              : 'text-gray-600'
+                          }`}>
+                            {message}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
               </div>
 
               {/* Results Section */}

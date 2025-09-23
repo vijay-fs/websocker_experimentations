@@ -29,24 +29,30 @@ RUN pip install --no-cache-dir numpy>=1.24.0
 
 # Copy and install remaining requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip uninstall -y torch torchvision \
-    && pip install --no-cache-dir torch==2.0.1+cpu torchvision==0.15.2+cpu -f https://download.pytorch.org/whl/torch_stable.html
-
-# Download EasyOCR models during build
-RUN python -c "import easyocr; easyocr.Reader(['en'])"
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
+# Create a non-root user first
+RUN useradd -m appuser
+
+# Create model cache directory and set permissions
+RUN mkdir -p /home/appuser/.EasyOCR && chown -R appuser:appuser /home/appuser
+
+# Download EasyOCR models during build as root first
+RUN python -c "import easyocr; reader = easyocr.Reader(['en']); print('Models downloaded successfully')"
+
+# Copy models to user directory
+RUN cp -r /root/.EasyOCR/* /home/appuser/.EasyOCR/ 2>/dev/null || true
+
+# Make scripts executable and fix permissions
+RUN chmod +x /app/entrypoint.sh && chown -R appuser:appuser /app
+
 # Expose port
 EXPOSE 8000
 
-# Make scripts executable
-RUN chmod +x /app/entrypoint.sh
-
-# Create a non-root user and switch to it
-RUN useradd -m appuser && chown -R appuser:appuser /app
+# Switch to non-root user
 USER appuser
 
 # Set environment variables with safe defaults

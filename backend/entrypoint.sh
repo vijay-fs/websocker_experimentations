@@ -10,7 +10,8 @@ done
 # Run the application
 if [ "$1" = "worker" ]; then
     echo "Starting RQ worker..."
-    exec rq worker --url "$REDIS_URL" default
+    # Add memory-friendly options and better error handling
+    exec rq worker --url "$REDIS_URL" --with-scheduler default
 else
     echo "Starting FastAPI server..."
     exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload

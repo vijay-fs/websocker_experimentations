@@ -53,32 +53,24 @@ export const useSocket = (): UsePusherReturn => {
 
   useEffect(() => {
     // Get Pusher configuration from environment variables
-    const pusherHost = process.env.NEXT_PUBLIC_PUSHER_HOST || 'localhost';
-    const pusherPort = parseInt(process.env.NEXT_PUBLIC_PUSHER_PORT || '6001');
-    const pusherScheme = process.env.NEXT_PUBLIC_PUSHER_SCHEME || 'ws';
-    const pusherKey = process.env.NEXT_PUBLIC_PUSHER_APP_KEY || 'app-key';
-    
+    const pusherKey = process.env.NEXT_PUBLIC_PUSHER_APP_KEY || 'f69118021e989cd5a601';
+    const pusherCluster = process.env.NEXT_PUBLIC_PUSHER_CLUSTER || 'ap2';
+
     console.log('🔧 Pusher config:', {
       key: pusherKey,
-      host: pusherHost,
-      port: pusherPort,
-      scheme: pusherScheme,
-      forceTLS: false,
+      cluster: pusherCluster,
+      forceTLS: true,
       env: process.env.NODE_ENV,
       allEnvVars: {
-        NEXT_PUBLIC_PUSHER_HOST: process.env.NEXT_PUBLIC_PUSHER_HOST,
-        NEXT_PUBLIC_PUSHER_PORT: process.env.NEXT_PUBLIC_PUSHER_PORT,
-        NEXT_PUBLIC_PUSHER_APP_KEY: process.env.NEXT_PUBLIC_PUSHER_APP_KEY
+        NEXT_PUBLIC_PUSHER_APP_KEY: process.env.NEXT_PUBLIC_PUSHER_APP_KEY,
+        NEXT_PUBLIC_PUSHER_CLUSTER: process.env.NEXT_PUBLIC_PUSHER_CLUSTER
       }
     });
-    
+
     const pusherInstance = new Pusher(pusherKey, {
-      wsHost: pusherHost,
-      wsPort: pusherPort,
-      forceTLS: false,
-      disableStats: true,
-      enabledTransports: ['ws', 'wss'],
-      cluster: 'mt1' // Required by Pusher.js but ignored by Soketi
+      cluster: pusherCluster,
+      forceTLS: true,
+      disableStats: true
     });
 
     const handleConnectionStateChange = (state: string) => {
