@@ -228,12 +228,13 @@ async def send_to_pusher(batch_id: str, message: str, progress: int, result: Opt
         # Send event to Pusher
         response = pusher_client.trigger(channel_name, event_name, data)
         
-        if response and response.get('status') == 200:
+        # Pusher Python client returns {} on success, or raises exception on failure
+        if response == {} or response is None:
             logger.info(f"✅ Pusher: batch {batch_id} sent successfully")
             return True
         else:
-            logger.error(f"❌ Pusher failed: {response}")
-            return False
+            logger.warning(f"⚠️ Pusher returned unexpected response: {response}")
+            return True  # Still consider it successful unless there's an exception
             
     except Exception as e:
         logger.error(f"Critical error in send_to_pusher for batch {batch_id}: {e}")
