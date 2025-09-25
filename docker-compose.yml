@@ -90,6 +90,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8000
+        - NEXT_PUBLIC_PUSHER_APP_KEY=app-key
+        - NEXT_PUBLIC_PUSHER_HOST=localhost
+        - NEXT_PUBLIC_PUSHER_PORT=6001
+        - NEXT_PUBLIC_PUSHER_SCHEME=ws
     container_name: ocr-frontend
     ports:
       - "3000:3000"
