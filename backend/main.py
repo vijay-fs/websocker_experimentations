@@ -2,18 +2,15 @@ import asyncio
 import json
 import logging
 import uuid
-import hmac
-import hashlib
-import time
 import os
 import base64
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional, List
-from urllib.parse import urlencode
 from io import BytesIO
 
 import httpx
+import pusher
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from rq import Queue
@@ -71,46 +68,41 @@ if 'REDIS_URL' not in os.environ:
 if 'RQ_REDIS_URL' not in os.environ:
     os.environ['RQ_REDIS_URL'] = os.environ['REDIS_URL']
 
-# Get Soketi server configuration from environment variables
-SOKETI_SERVER_URL = os.getenv("SOKETI_SERVER_URL", "http://soketi:6001")
-SOKETI_APP_ID = os.getenv("SOKETI_APP_ID", "app-id")
-SOKETI_APP_KEY = os.getenv("SOKETI_APP_KEY", "app-key")
-SOKETI_APP_SECRET = os.getenv("SOKETI_APP_SECRET", "app-secret")
+# Get Pusher configuration from environment variables
+PUSHER_APP_ID = os.getenv("PUSHER_APP_ID", "")
+PUSHER_APP_KEY = os.getenv("PUSHER_APP_KEY", "")
+PUSHER_APP_SECRET = os.getenv("PUSHER_APP_SECRET", "")
+PUSHER_CLUSTER = os.getenv("PUSHER_CLUSTER", "us2")
+PUSHER_USE_TLS = os.getenv("PUSHER_USE_TLS", "true").lower() == "true"
 
-def create_pusher_auth_signature(method: str, path: str, query_string: str = "") -> str:
-    """Create Pusher authentication signature for Soketi HTTP API"""
-    timestamp = str(int(time.time()))
-    
-    # Build query parameters
-    auth_params = {
-        "auth_key": SOKETI_APP_KEY,
-        "auth_timestamp": timestamp,
-        "auth_version": "1.0"
-    }
-    
-    # Add any additional query parameters
-    if query_string:
-        for param in query_string.split('&'):
-            if '=' in param:
-                key, value = param.split('=', 1)
-                auth_params[key] = value
-    
-    # Create query string from sorted parameters
-    query_string = urlencode(sorted(auth_params.items()))
-    
-    # Create string to sign
-    string_to_sign = f"{method}\n{path}\n{query_string}"
-    
-    # Create auth signature
-    signature = hmac.new(
-        SOKETI_APP_SECRET.encode('utf-8'),
-        string_to_sign.encode('utf-8'),
-        hashlib.sha256
-    ).hexdigest()
-    
-    return f"{query_string}&auth_signature={signature}"
+# Debug: Log the Pusher configuration (without secrets)
+logger.info(f"Pusher configuration - APP_ID: '{PUSHER_APP_ID}', APP_KEY: '{PUSHER_APP_KEY}', CLUSTER: '{PUSHER_CLUSTER}', USE_TLS: {PUSHER_USE_TLS}")
+logger.info(f"APP_SECRET length: {len(PUSHER_APP_SECRET) if PUSHER_APP_SECRET else 0}")
 
-logger.info(f"Connecting to Soketi server at {SOKETI_SERVER_URL}")
+# Initialize Pusher client
+pusher_client = None
+
+def init_pusher():
+    """Initialize Pusher client"""
+    global pusher_client
+    
+    if not PUSHER_APP_ID or not PUSHER_APP_KEY or not PUSHER_APP_SECRET:
+        logger.error("Pusher credentials not provided. Please set PUSHER_APP_ID, PUSHER_APP_KEY, and PUSHER_APP_SECRET environment variables.")
+        return False
+    
+    try:
+        pusher_client = pusher.Pusher(
+            app_id=PUSHER_APP_ID,
+            key=PUSHER_APP_KEY,
+            secret=PUSHER_APP_SECRET,
+            cluster=PUSHER_CLUSTER,
+            ssl=PUSHER_USE_TLS
+        )
+        logger.info(f"Pusher client initialized for cluster {PUSHER_CLUSTER}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize Pusher client: {e}")
+        return False
 
 # HTTP client for Soketi requests
 http_client = httpx.AsyncClient()
@@ -208,8 +200,14 @@ def convert_image_format(image_data: bytes, target_format: str = "RGB") -> Image
     except Exception as e:
         raise ValueError(f"Failed to convert image format: {str(e)}")
 
-async def send_to_soketi(batch_id: str, message: str, progress: int, result: Optional[Dict[str, Any]] = None, message_type: str = "info"):
-    """Send message to Soketi server"""
+async def send_to_pusher(batch_id: str, message: str, progress: int, result: Optional[Dict[str, Any]] = None, message_type: str = "info"):
+    """Send message to Pusher"""
+    global pusher_client
+    
+    if not pusher_client:
+        logger.error("Pusher client not initialized")
+        return False
+    
     try:
         data = {
             "type": "batch_update",
@@ -221,39 +219,24 @@ async def send_to_soketi(batch_id: str, message: str, progress: int, result: Opt
             "result": result
         }
         
-        payload = {
-            "name": "batch_update",
-            "channel": f"batch.{batch_id}",
-            "data": data
-        }
+        channel_name = f"batch.{batch_id}"
+        event_name = "batch_update"
         
-        # Send to Soketi HTTP API with proper Pusher authentication
-        path = f"/apps/{SOKETI_APP_ID}/events"
-        auth_query = create_pusher_auth_signature("POST", path)
+        logger.info(f"🚀 Sending to Pusher channel: {channel_name}")
+        logger.info(f"📦 Event: {event_name}, Data: {json.dumps(data, indent=2)}")
         
-        logger.info(f"🚀 Sending to Soketi: {SOKETI_SERVER_URL}{path}?{auth_query}")
-        logger.info(f"📦 Payload: {json.dumps(payload, indent=2)}")
+        # Send event to Pusher
+        response = pusher_client.trigger(channel_name, event_name, data)
         
-        response = await http_client.post(
-            f"{SOKETI_SERVER_URL}{path}?{auth_query}",
-            json=payload,
-            headers={
-                "Content-Type": "application/json"
-            }
-        )
-        
-        logger.info(f"📡 Soketi response status: {response.status_code}")
-        logger.info(f"📡 Soketi response headers: {dict(response.headers)}")
-        logger.info(f"📡 Soketi response body: {response.text}")
-        
-        if response.status_code == 200:
-            logger.info(f"✅ Soketi: batch {batch_id} sent successfully")
+        if response and response.get('status') == 200:
+            logger.info(f"✅ Pusher: batch {batch_id} sent successfully")
             return True
         else:
-            logger.error(f"❌ Soketi failed: {response.status_code} - {response.text}")
+            logger.error(f"❌ Pusher failed: {response}")
             return False
+            
     except Exception as e:
-        logger.error(f"Critical error in send_to_soketi for batch {batch_id}: {e}")
+        logger.error(f"Critical error in send_to_pusher for batch {batch_id}: {e}")
         # Update batch status with error
         batch_data = await get_batch_status(batch_id)
         if batch_data:
@@ -295,7 +278,7 @@ async def simulate_long_process(batch_id: str):
         # Save updated status to Redis
         await set_batch_status(batch_id, batch_data)
         
-        await send_to_soketi(batch_id, message, progress, None)
+        await send_to_pusher(batch_id, message, progress, None)
         
         # Check if the process was cancelled or completed
         updated_batch_data = await get_batch_status(batch_id)
@@ -309,7 +292,13 @@ async def simulate_long_process(batch_id: str):
     await set_batch_status(batch_id, batch_data)
 
 async def start_redis_listener():
-    """Start listening to Redis Pub/Sub channels and forward to Soketi"""
+    """Start listening to Redis Pub/Sub channels and forward to Pusher"""
+    global pusher_client
+    
+    if not pusher_client:
+        logger.error("Pusher client not initialized, cannot start Redis listener")
+        return
+    
     try:
         # Use async Redis client for Pub/Sub
         redis = get_async_redis()
@@ -326,78 +315,22 @@ async def start_redis_listener():
                         channel = message["channel"]
                         data = json.loads(message["data"]) if isinstance(message["data"], (str, bytes)) else message["data"]
                         
-                        # Forward relevant messages to Soketi
+                        # Forward relevant messages to Pusher
                         if channel == "jobs:update" and "batch_id" in data:
-                            logger.info(f"Forwarding job update to Soketi: {data['batch_id']} - {data.get('message')}")
+                            logger.info(f"Forwarding job update to Pusher: {data['batch_id']} - {data.get('message')}")
 
-                            # Send to Soketi using HTTP API
-                            payload = {
-                                "name": "batch_update",
-                                "channel": f"batch.{data['batch_id']}",
-                                "data": {
-                                    "type": "batch_update",
-                                    "batch_id": data["batch_id"],
-                                    "message": data.get("message", "Processing..."),
-                                    "progress": data.get("progress", 0),
-                                    "timestamp": datetime.utcnow().isoformat(),
-                                    "message_type": data.get("message_type", "info"),
-                                    "result": data.get("result")
-                                }
-                            }
-                            
                             try:
-                                # Try multiple approaches to ensure event delivery
-                                
-                                # 1. Direct Redis pub/sub to Soketi adapter
-                                redis_adapter = get_async_redis()
-                                
-                                # Format for Soketi Redis adapter
-                                soketi_redis_message = {
-                                    "event": "batch_update",
-                                    "data": json.dumps({
-                                        "type": "batch_update",
-                                        "batch_id": data["batch_id"],
-                                        "message": data.get("message", "Processing..."),
-                                        "progress": data.get("progress", 0),
-                                        "timestamp": datetime.utcnow().isoformat(),
-                                        "message_type": data.get("message_type", "info"),
-                                        "result": data.get("result")
-                                    }),
-                                    "channel": f"batch.{data['batch_id']}"
-                                }
-                                
-                                # 2. HTTP API with authentication (Primary approach)
-                                path = f"/apps/{SOKETI_APP_ID}/events"
-                                auth_query = create_pusher_auth_signature("POST", path)
-                                
-                                response = await http_client.post(
-                                    f"{SOKETI_SERVER_URL}{path}?{auth_query}",
-                                    json=payload,
-                                    headers={
-                                        "Content-Type": "application/json"
-                                    }
+                                # Send directly to Pusher
+                                await send_to_pusher(
+                                    batch_id=data["batch_id"],
+                                    message=data.get("message", "Processing..."),
+                                    progress=data.get("progress", 0),
+                                    result=data.get("result"),
+                                    message_type=data.get("message_type", "info")
                                 )
                                 
-                                logger.info(f"📡 HTTP API: {response.status_code} - {response.text[:100]}")
-                                
-                                # Only try Redis approach if HTTP API fails
-                                if response.status_code != 200:
-                                    logger.warning("HTTP API failed, trying Redis approach")
-                                    # Publish to the correct channel format for Soketi Redis adapter
-                                    soketi_channel_name = f"batch.{data['batch_id']}"
-                                    await redis_adapter.publish(soketi_channel_name, json.dumps(soketi_redis_message))
-                                    logger.info(f"✅ Redis->Soketi: batch {data['batch_id']} published via Redis")
-                                
                             except Exception as e:
-                                logger.error(f"Error sending to Soketi: {str(e)}")
-                                
-                                # Fallback: try direct Redis publish
-                                try:
-                                    soketi_channel_name = f"batch.{data['batch_id']}"
-                                    await redis_adapter.publish(soketi_channel_name, json.dumps(soketi_redis_message))
-                                    logger.info(f"✅ Fallback Redis->Soketi: batch {data['batch_id']} published via Redis")
-                                except Exception as fallback_error:
-                                    logger.error(f"Fallback also failed: {fallback_error}")
+                                logger.error(f"Error sending to Pusher: {str(e)}")
                                 
             except Exception as e:
                 logger.error(f"Error in Redis Pub/Sub listener: {str(e)}")
@@ -584,10 +517,10 @@ async def upload_drawing(
         # Re-raise the exception with HTTP 500
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/test-soketi/{batch_id}")
-async def test_soketi_event(batch_id: str):
-    """Manual test endpoint to trigger Soketi events"""
-    success = await send_to_soketi(
+@app.post("/api/test-pusher/{batch_id}")
+async def test_pusher_event(batch_id: str):
+    """Manual test endpoint to trigger Pusher events"""
+    success = await send_to_pusher(
         batch_id=batch_id,
         message="Manual test event from API",
         progress=50,
@@ -603,7 +536,7 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
             "redis": False,
-            "soketi": False,
+            "pusher": False,
             "api": True
         },
         "details": {}
@@ -624,16 +557,20 @@ async def health_check():
         status["details"]["rq"] = "Connected" if rq_ok else "Connection failed"
     except Exception as e:
         status["details"]["rq_error"] = str(e)
-    # Check Soketi connection
+    # Check Pusher connection
     try:
-        response = await http_client.get(f"{SOKETI_SERVER_URL}")
-        if response.status_code == 200:
-            status["services"]["soketi"] = True
-            status["details"]["soketi"] = "Connected"
+        if pusher_client:
+            # Test Pusher connection by triggering a test event
+            test_response = pusher_client.trigger('test-channel', 'test-event', {'test': 'data'})
+            if test_response and test_response.get('status') == 200:
+                status["services"]["pusher"] = True
+                status["details"]["pusher"] = "Connected"
+            else:
+                status["details"]["pusher_error"] = str(test_response)
         else:
-            status["details"]["soketi_error"] = response.text
+            status["details"]["pusher_error"] = "Pusher client not initialized"
     except Exception as e:
-        status["details"]["soketi_error"] = str(e)
+        status["details"]["pusher_error"] = str(e)
     
     # If any critical service is down, mark status as error
     if not all(status["services"].values()):
@@ -669,6 +606,11 @@ async def startup_event():
             logger.warning(f"Attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
             await asyncio.sleep(retry_delay)
 
+    # Initialize Pusher client
+    pusher_initialized = init_pusher()
+    if not pusher_initialized:
+        logger.warning("Pusher client initialization failed. Real-time features may not work.")
+    
     # Start Redis Pub/Sub listener in the background
     asyncio.create_task(start_redis_listener())
 

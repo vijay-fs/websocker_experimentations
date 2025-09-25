@@ -1,6 +1,6 @@
 # Real-Time OCR Engineering Drawing Processor
 
-A full-stack application for processing engineering drawings with real-time OCR text detection and WebSocket-based progress updates.
+A full-stack application for processing engineering drawings with real-time OCR text detection and Pusher-based progress updates.
 
 ## Demo
 
@@ -31,7 +31,7 @@ A full-stack application for processing engineering drawings with real-time OCR 
 - **Collapsible Results**: Expandable sections for detailed OCR analysis
 
 ### Real-Time Features
-- **WebSocket Connection**: Live connection status indicator
+- **Pusher WebSocket Connection**: Live connection status indicator with Pusher
 - **Process Monitoring**: Track multiple concurrent processing jobs
 - **Automatic Recovery**: Reconnection handling and batch status restoration
 - **Persistent State**: Process history maintained across browser sessions
@@ -42,28 +42,24 @@ A full-stack application for processing engineering drawings with real-time OCR 
 - **FastAPI**: High-performance Python web framework
 - **EasyOCR**: Advanced OCR library for text detection
 - **Pillow**: Image processing and manipulation
-- **Socket.IO**: Real-time WebSocket communication
-- **Asyncio**: Asynchronous processing for concurrent operations
-
-### WebSocket Server
-- **Node.js/TypeScript**: Real-time message broadcasting
-- **Socket.IO**: WebSocket server with room-based subscriptions
-- **Express**: HTTP server for health checks
+- **Pusher**: Real-time WebSocket communication service
+- **Redis**: Message queuing and caching
+- **RQ**: Background job processing
 
 ### Frontend
 - **Next.js 15**: React framework with TypeScript
-- **Socket.IO Client**: Real-time WebSocket integration
+- **Pusher-JS**: Real-time WebSocket integration
 - **Tailwind CSS**: Modern styling and responsive design
 - **React Hooks**: Custom WebSocket management and state handling
 
 ## Architecture
 
 ```
-Frontend (Next.js) ←→ WebSocket Server (Node.js) ←→ Backend (FastAPI)
-                                ↓
-                        Real-time Progress Updates
-                                ↓
-                        EasyOCR Processing Engine
+Frontend (Next.js) ←→ Pusher WebSocket Service ←→ Backend (FastAPI)
+                                ↓                        ↓
+                        Real-time Progress Updates    Redis Queue
+                                ↓                        ↓
+                        EasyOCR Processing Engine ←→ RQ Worker
 ```
 
 ## Key Capabilities
@@ -80,59 +76,83 @@ Frontend (Next.js) ←→ WebSocket Server (Node.js) ←→ Backend (FastAPI)
 ### Prerequisites
 - Docker and Docker Compose
 - Git
+- Pusher account (free tier available at https://pusher.com/)
 
 ### Docker Installation (Recommended)
 
-1. **Clone and start with Docker**:
+1. **Clone the repository**:
    ```bash
    git clone <your-repo-url>
    cd websocker_experimentations
+   ```
+
+2. **Set up Pusher credentials**:
+   ```bash
+   # Copy the example environment file
+   cp .env.example .env
+   
+   # Edit .env and add your Pusher credentials
+   # Get these from https://dashboard.pusher.com/
+   ```
+
+3. **Start with Docker**:
+   ```bash
    docker-compose up --build
    ```
 
-2. **Access application**:
+4. **Access application**:
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:8000
-   - WebSocket Server: http://localhost:8001
 
 ### Manual Installation (Alternative)
 
 #### Prerequisites
 - Node.js 18+
 - Python 3.8+
-- Yarn package manager
+- Redis server
+- Pusher account
 
 #### Steps
 
-1. **Install dependencies**:
+1. **Set up environment**:
    ```bash
-   yarn install
+   # Copy and configure environment variables
+   cp .env.example .env
+   # Edit .env with your Pusher credentials
    ```
 
-2. **Backend setup**:
+2. **Install dependencies**:
    ```bash
-   cd backend
-   pip install -r requirements.txt
+   # Frontend dependencies
+   cd frontend
+   npm install
+   
+   # Backend dependencies
+   cd ../backend
+   pip install -e .
    ```
 
 3. **Start services**:
    ```bash
-   # Terminal 1: WebSocket Server
-   cd websocket-server
-   yarn dev
+   # Terminal 1: Redis server
+   redis-server
 
    # Terminal 2: Backend API
    cd backend
    python main.py
 
-   # Terminal 3: Frontend
-   yarn dev
+   # Terminal 3: RQ Worker
+   cd backend
+   rq worker
+
+   # Terminal 4: Frontend
+   cd frontend
+   npm run dev
    ```
 
 4. **Access application**:
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:8000
-   - WebSocket Server: http://localhost:8001
 
 ## Docker Commands
 
@@ -159,11 +179,8 @@ docker-compose build backend
 
 ### Development with Docker
 ```bash
-# Start only backend and websocket
-docker-compose up backend websocket-server
-
-# Scale services (if needed)
-docker-compose up --scale backend=2
+# Start only backend services
+docker-compose up backend worker redis
 
 # Execute commands in running container
 docker-compose exec backend bash
@@ -184,8 +201,26 @@ docker-compose exec frontend sh
 - `GET /api/batch-status/{batch_id}`: Get processing status
 - `GET /api/health`: Health check endpoint
 
-## WebSocket Events
+## Pusher Events
 
-- `subscribe_to_batch`: Subscribe to processing updates
-- `unsubscribe_from_batch`: Unsubscribe from updates
-- `batch_progress`: Real-time progress notifications
+- **Channel**: `batch.{batch_id}` - Subscribe to specific batch updates
+- **Event**: `batch_update` - Real-time progress notifications with OCR results
+
+## Environment Variables
+
+### Required Pusher Configuration
+```bash
+PUSHER_APP_ID=your_pusher_app_id
+PUSHER_APP_KEY=your_pusher_app_key
+PUSHER_APP_SECRET=your_pusher_app_secret
+PUSHER_CLUSTER=us2  # or your preferred cluster
+PUSHER_USE_TLS=true
+```
+
+### Optional Configuration
+```bash
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_URL=redis://localhost:6379/0
+RQ_REDIS_URL=redis://localhost:6379/0
+```

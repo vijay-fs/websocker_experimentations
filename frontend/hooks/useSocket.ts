@@ -56,32 +56,33 @@ export const useSocket = (): UsePusherReturn => {
     console.log('🔧 [useSocket] useEffect triggered - initializing Pusher');
     
     // Get Pusher configuration from environment variables
-    const pusherHost = process.env.NEXT_PUBLIC_PUSHER_HOST || 'localhost';
-    const pusherPort = parseInt(process.env.NEXT_PUBLIC_PUSHER_PORT || '6001');
-    const pusherScheme = process.env.NEXT_PUBLIC_PUSHER_SCHEME || 'ws';
-    const pusherKey = process.env.NEXT_PUBLIC_PUSHER_APP_KEY || 'app-key';
+    const pusherKey = process.env.NEXT_PUBLIC_PUSHER_APP_KEY || '';
+    const pusherCluster = process.env.NEXT_PUBLIC_PUSHER_CLUSTER || 'us2';
+    const pusherUseTLS = process.env.NEXT_PUBLIC_PUSHER_USE_TLS !== 'false';
     
     console.log('🔧 [useSocket] Pusher config:', {
       key: pusherKey,
-      host: pusherHost,
-      port: pusherPort,
-      scheme: pusherScheme,
-      forceTLS: false,
+      cluster: pusherCluster,
+      forceTLS: pusherUseTLS,
       env: process.env.NODE_ENV,
       allEnvVars: {
-        NEXT_PUBLIC_PUSHER_HOST: process.env.NEXT_PUBLIC_PUSHER_HOST,
-        NEXT_PUBLIC_PUSHER_PORT: process.env.NEXT_PUBLIC_PUSHER_PORT,
-        NEXT_PUBLIC_PUSHER_APP_KEY: process.env.NEXT_PUBLIC_PUSHER_APP_KEY
+        NEXT_PUBLIC_PUSHER_APP_KEY: process.env.NEXT_PUBLIC_PUSHER_APP_KEY,
+        NEXT_PUBLIC_PUSHER_CLUSTER: process.env.NEXT_PUBLIC_PUSHER_CLUSTER,
+        NEXT_PUBLIC_PUSHER_USE_TLS: process.env.NEXT_PUBLIC_PUSHER_USE_TLS
       }
     });
     
+    if (!pusherKey) {
+      console.error('🔧 [useSocket] NEXT_PUBLIC_PUSHER_APP_KEY is required');
+      setError('Pusher configuration missing. Please set NEXT_PUBLIC_PUSHER_APP_KEY environment variable.');
+      return;
+    }
+    
     const pusherInstance = new Pusher(pusherKey, {
-      wsHost: pusherHost,
-      wsPort: pusherPort,
-      forceTLS: false,
+      cluster: pusherCluster,
+      forceTLS: pusherUseTLS,
       disableStats: true,
-      enabledTransports: ['ws', 'wss'],
-      cluster: 'mt1' // Required by Pusher.js but ignored by Soketi
+      enabledTransports: ['ws', 'wss']
     });
 
     const handleConnectionStateChange = (state: string) => {
