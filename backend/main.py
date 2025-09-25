@@ -366,20 +366,7 @@ async def start_redis_listener():
                                     "channel": f"batch.{data['batch_id']}"
                                 }
                                 
-                                # Publish to multiple Redis channels for Soketi
-                                channels_to_try = [
-                                    f"soketi:app-id:channel:batch.{data['batch_id']}",
-                                    f"soketi:app:{SOKETI_APP_ID}:channel:batch.{data['batch_id']}",
-                                    f"pusher:batch.{data['batch_id']}",
-                                    f"batch.{data['batch_id']}"
-                                ]
-                                
-                                for channel in channels_to_try:
-                                    await redis_adapter.publish(channel, json.dumps(soketi_redis_message))
-                                
-                                logger.info(f"✅ Redis->Soketi (multiple channels): batch {data['batch_id']} published")
-                                
-                                # 2. HTTP API with authentication
+                                # 2. HTTP API with authentication (Primary approach)
                                 path = f"/apps/{SOKETI_APP_ID}/events"
                                 auth_query = create_pusher_auth_signature("POST", path)
                                 
@@ -393,8 +380,24 @@ async def start_redis_listener():
                                 
                                 logger.info(f"📡 HTTP API: {response.status_code} - {response.text[:100]}")
                                 
+                                # Only try Redis approach if HTTP API fails
+                                if response.status_code != 200:
+                                    logger.warning("HTTP API failed, trying Redis approach")
+                                    # Publish to the correct channel format for Soketi Redis adapter
+                                    soketi_channel_name = f"batch.{data['batch_id']}"
+                                    await redis_adapter.publish(soketi_channel_name, json.dumps(soketi_redis_message))
+                                    logger.info(f"✅ Redis->Soketi: batch {data['batch_id']} published via Redis")
+                                
                             except Exception as e:
                                 logger.error(f"Error sending to Soketi: {str(e)}")
+                                
+                                # Fallback: try direct Redis publish
+                                try:
+                                    soketi_channel_name = f"batch.{data['batch_id']}"
+                                    await redis_adapter.publish(soketi_channel_name, json.dumps(soketi_redis_message))
+                                    logger.info(f"✅ Fallback Redis->Soketi: batch {data['batch_id']} published via Redis")
+                                except Exception as fallback_error:
+                                    logger.error(f"Fallback also failed: {fallback_error}")
                                 
             except Exception as e:
                 logger.error(f"Error in Redis Pub/Sub listener: {str(e)}")

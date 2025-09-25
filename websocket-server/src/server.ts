@@ -111,7 +111,7 @@ io.on('connection', (socket) => {
     }
     console.log(`Emitting batch_progress to room batch_${data.batch_id}:`, logData);
     
-    io.to(`batch_${data.batch_id}`).emit('batch_progress', progressData);
+    io.to(`batch_${data.batch_id}`).emit('batch_update', progressData);
     console.log(`Broadcast completed for batch ${data.batch_id}`);
   });
 
