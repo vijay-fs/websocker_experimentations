@@ -33,7 +33,6 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip uninstall -y torch torchvision \
     && pip install --no-cache-dir torch==2.0.1+cpu torchvision==0.15.2+cpu -f https://download.pytorch.org/whl/torch_stable.html
 
-
 # Copy application code
 COPY . .
 
@@ -53,10 +52,7 @@ ENV PYTHONUNBUFFERED=1 \
     REDIS_HOST=localhost \
     REDIS_PORT=6379 \
     REDIS_URL=redis://localhost:6379/0 \
-    RQ_REDIS_URL=redis://localhost:6379/0 \
-    SOCKETIO_SERVER_URL=http://websocket-server:8001
-
-# Remove the inline entrypoint script creation since we have a separate entrypoint.sh file
+    RQ_REDIS_URL=redis://localhost:6379/0
 
 # Set the entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]

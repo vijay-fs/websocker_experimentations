@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional, List
 from io import BytesIO
 
-import httpx
 import pusher
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware

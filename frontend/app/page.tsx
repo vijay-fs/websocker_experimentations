@@ -77,9 +77,7 @@ export default function Home() {
 
   // Handle real-time updates
   useEffect(() => {
-    console.log('🔍 [page.tsx] batchProgressMap changed:', Array.from(batchProgressMap.entries()));
     batchProgressMap.forEach((progress, batchId) => {
-      console.log(`Update for ${batchId}: ${progress.progress}%`);
       
       if (progress.messageType === 'success' || progress.messageType === 'error') {
         addToast(progress.message, progress.messageType as 'success' | 'error' | 'warning' | 'info');
