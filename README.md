@@ -1,58 +1,30 @@
 # Real-Time OCR Engineering Drawing Processor
 
-A full-stack application for processing engineering drawings with real-time OCR text detection and Pusher-based progress updates.
+A containerized full-stack application for processing engineering drawings with real-time OCR text detection and WebSocket-based progress updates using Pusher.
 
-## Demo
-
-![Demo 1](assets/demo1.PNG)
-*Real-time processing interface with progress tracking*
-
-![Demo 2](assets/demo2.PNG)
-*OCR results with annotated engineering drawing*
-
-## Features
+## 🚀 Features
 
 ### Core Functionality
-- **Real-Time OCR Processing**: Uses EasyOCR for accurate text detection in engineering drawings
+- **Real-Time OCR Processing**: Advanced text detection in engineering drawings using EasyOCR
 - **Live Progress Updates**: WebSocket-based real-time progress tracking with detailed status messages
 - **Multi-Format Support**: Supports JPG, PNG, BMP, and TIFF image formats
 - **Image Optimization**: Automatic compression and resizing for efficient transmission
+- **Batch Processing**: Handle multiple files with individual progress tracking
 
 ### User Interface
-- **File Upload Interface**: Drag-and-drop file selection with format validation
-- **Progress Visualization**: Animated progress bars with current processing step indicators
+- **Modern React Frontend**: Built with Next.js 15 and TypeScript
+- **Drag-and-Drop Upload**: Intuitive file selection with format validation
+- **Real-Time Progress Visualization**: Animated progress bars with processing step indicators
 - **Toast Notifications**: Success, error, and info notifications with auto-dismiss
-- **Responsive Design**: Modern, clean interface with hover effects and transitions
+- **Responsive Design**: Clean, modern interface optimized for all devices
 
 ### Results Display
-- **Processed Image Viewer**: Click-to-expand  annotated images with OCR markings
-- **Processing Statistics**: Image dimensions, file sizes, detection counts, and processing time
+- **Annotated Image Viewer**: Click-to-expand processed images with OCR markings
+- **Processing Statistics**: Detailed metrics including detection counts and processing time
 - **Full-Size Image View**: Open processed images in new window for detailed inspection
-- **Collapsible Results**: Expandable sections for detailed OCR analysis
+- **Collapsible Results**: Expandable sections for comprehensive OCR analysis
 
-### Real-Time Features
-- **Pusher WebSocket Connection**: Live connection status indicator with Pusher
-- **Process Monitoring**: Track multiple concurrent processing jobs
-- **Automatic Recovery**: Reconnection handling and batch status restoration
-- **Persistent State**: Process history maintained across browser sessions
-
-## Tech Stack
-
-### Backend
-- **FastAPI**: High-performance Python web framework
-- **EasyOCR**: Advanced OCR library for text detection
-- **Pillow**: Image processing and manipulation
-- **Pusher**: Real-time WebSocket communication service
-- **Redis**: Message queuing and caching
-- **RQ**: Background job processing
-
-### Frontend
-- **Next.js 15**: React framework with TypeScript
-- **Pusher-JS**: Real-time WebSocket integration
-- **Tailwind CSS**: Modern styling and responsive design
-- **React Hooks**: Custom WebSocket management and state handling
-
-## Architecture
+## 🏗️ Architecture
 
 ```
 Frontend (Next.js) ←→ Pusher WebSocket Service ←→ Backend (FastAPI)
@@ -62,99 +34,67 @@ Frontend (Next.js) ←→ Pusher WebSocket Service ←→ Backend (FastAPI)
                         EasyOCR Processing Engine ←→ RQ Worker
 ```
 
-## Key Capabilities
+## 🛠️ Tech Stack
 
-1. **Engineering Drawing Analysis**: Specialized for technical drawings and schematic
-2. **Real-Time Feedback**: Incremental progress updates during processing
-3. **Image Annotation**: Visual markup of detected text elements
-4. **Batch Processing**: Handle multiple files with individual progress tracking
-5. **Error Handling**: Comprehensive error recovery and user feedback
-6. **Performance Optimization**: Compressed image transmission and efficient rendering
+### Backend
+- **FastAPI**: High-performance Python web framework
+- **EasyOCR**: Advanced OCR library for text detection
+- **Pillow (PIL)**: Image processing and manipulation
+- **Pusher**: Real-time WebSocket communication service
+- **Redis**: Message queuing and caching
+- **RQ**: Background job processing
 
-## Getting Started
+### Frontend
+- **Next.js 15**: React framework with TypeScript
+- **Pusher-JS**: Real-time WebSocket integration
+- **Tailwind CSS**: Modern styling and responsive design
+- **Custom React Hooks**: WebSocket management and state handling
 
-### Prerequisites
-- Docker and Docker Compose
-- Git
-- Pusher account (free tier available at https://pusher.com/)
+### Infrastructure
+- **Docker & Docker Compose**: Containerized deployment
+- **Redis**: In-memory data structure store
+- **Multi-stage Docker builds**: Optimized container images
 
-### Docker Installation (Recommended)
+## 📋 Prerequisites
 
-1. **Clone the repository**:
-   ```bash
-   git clone <your-repo-url>
-   cd websocker_experimentations
-   ```
+- **Docker** and **Docker Compose**
+- **Git**
+- **Pusher Account** (free tier available at [pusher.com](https://pusher.com/))
 
-2. **Set up Pusher credentials**:
-   ```bash
-   # Copy the example environment file
-   cp .env.example .env
-   
-   # Edit .env and add your Pusher credentials
-   # Get these from https://dashboard.pusher.com/
-   ```
+## 🚀 Quick Start
 
-3. **Start with Docker**:
-   ```bash
-   docker-compose up --build
-   ```
+### 1. Clone Repository
+```bash
+git clone <repository-url>
+cd websocker_experimentations
+```
 
-4. **Access application**:
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:8000
+### 2. Configure Environment
+```bash
+# Copy the example environment file
+cp .env.example .env
 
-### Manual Installation (Alternative)
+# Edit .env and add your Pusher credentials
+# Get these from https://dashboard.pusher.com/
+nano .env
+```
 
-#### Prerequisites
-- Node.js 18+
-- Python 3.8+
-- Redis server
-- Pusher account
+### 3. Start Application
 
-#### Steps
+```bash
+# Build and start all services
+docker compose up --build
 
-1. **Set up environment**:
-   ```bash
-   # Copy and configure environment variables
-   cp .env.example .env
-   # Edit .env with your Pusher credentials
-   ```
+# Or start in background
+docker compose up --build -d
+```
 
-2. **Install dependencies**:
-   ```bash
-   # Frontend dependencies
-   cd frontend
-   npm install
-   
-   # Backend dependencies
-   cd ../backend
-   pip install -e .
-   ```
+### 4. Access Application
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8000
+- **API Documentation**: http://localhost:8000/docs
 
-3. **Start services**:
-   ```bash
-   # Terminal 1: Redis server
-   redis-server
-
-   # Terminal 2: Backend API
-   cd backend
-   python main.py
-
-   # Terminal 3: RQ Worker
-   cd backend
-   rq worker
-
-   # Terminal 4: Frontend
-   cd frontend
-   npm run dev
-   ```
-
-4. **Access application**:
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:8000
-
-## Docker Commands
+## 🐳 Docker Commands
 
 ### Basic Operations
 ```bash
@@ -173,11 +113,17 @@ docker-compose down
 # View logs
 docker-compose logs -f
 
+# View logs for specific service
+docker-compose logs backend
+docker-compose logs frontend
+docker-compose logs worker
+
 # Rebuild specific service
 docker-compose build backend
+docker-compose build frontend
 ```
 
-### Development with Docker
+### Development Commands
 ```bash
 # Start only backend services
 docker-compose up backend worker redis
@@ -185,9 +131,15 @@ docker-compose up backend worker redis
 # Execute commands in running container
 docker-compose exec backend bash
 docker-compose exec frontend sh
+
+# Check container status
+docker-compose ps
+
+# Remove all containers and volumes
+docker-compose down -v
 ```
 
-## Usage
+## 📖 Usage
 
 1. **Upload Engineering Drawing**: Select an image file (JPG, PNG, BMP, TIFF)
 2. **Monitor Progress**: Watch real-time processing updates with detailed steps
@@ -195,18 +147,19 @@ docker-compose exec frontend sh
 4. **Analyze Data**: Review detection statistics and processing metrics
 5. **Full-Size Viewing**: Click images to open in new window for detailed inspection
 
-## API Endpoints
+## 🔌 API Endpoints
 
 - `POST /api/upload-drawing`: Upload and process engineering drawing
 - `GET /api/batch-status/{batch_id}`: Get processing status
 - `GET /api/health`: Health check endpoint
+- `GET /docs`: Interactive API documentation (Swagger UI)
 
-## Pusher Events
+## 📡 WebSocket Events
 
 - **Channel**: `batch.{batch_id}` - Subscribe to specific batch updates
 - **Event**: `batch_update` - Real-time progress notifications with OCR results
 
-## Environment Variables
+## ⚙️ Environment Variables
 
 ### Required Pusher Configuration
 ```bash
@@ -215,12 +168,75 @@ PUSHER_APP_KEY=your_pusher_app_key
 PUSHER_APP_SECRET=your_pusher_app_secret
 PUSHER_CLUSTER=us2  # or your preferred cluster
 PUSHER_USE_TLS=true
+
+# Frontend environment variables (prefixed with NEXT_PUBLIC_)
+NEXT_PUBLIC_PUSHER_APP_KEY=your_pusher_app_key
+NEXT_PUBLIC_PUSHER_CLUSTER=us2
+NEXT_PUBLIC_PUSHER_USE_TLS=true
+NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
 ### Optional Configuration
 ```bash
-REDIS_HOST=localhost
+REDIS_HOST=redis
 REDIS_PORT=6379
-REDIS_URL=redis://localhost:6379/0
-RQ_REDIS_URL=redis://localhost:6379/0
+REDIS_URL=redis://redis:6379/0
+RQ_REDIS_URL=redis://redis:6379/0
 ```
+
+## 🏗️ Project Structure
+
+```
+websocker_experimentations/
+├── backend/                 # FastAPI backend application
+│   ├── app/                # Application modules
+│   ├── Dockerfile          # Backend container configuration
+│   ├── requirements.txt    # Python dependencies
+│   ├── main.py            # FastAPI application entry point
+│   └── entrypoint.sh      # Container startup script
+├── frontend/               # Next.js frontend application
+│   ├── app/               # Next.js app directory
+│   ├── hooks/             # Custom React hooks
+│   ├── public/            # Static assets
+│   ├── Dockerfile         # Frontend container configuration
+│   └── package.json       # Node.js dependencies
+├── assets/                # Demo images and documentation
+├── docker-compose.yml     # Multi-container orchestration
+├── .env.example          # Environment variables template
+└── README.md             # This file
+```
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+**Container fails to start:**
+```bash
+# Check logs
+docker-compose logs [service-name]
+
+# Rebuild containers
+docker-compose down
+docker-compose up --build
+```
+
+**Pusher connection issues:**
+- Verify Pusher credentials in `.env` file
+- Check if `NEXT_PUBLIC_` prefixed variables are set for frontend
+- Ensure Pusher cluster is correct
+
+**Redis connection errors:**
+- Ensure Redis container is running: `docker-compose ps`
+- Check Redis logs: `docker-compose logs redis`
+
+## 📄 License
+
+This project is open source and available under the [MIT License](LICENSE).
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test with Docker
+5. Submit a pull request
