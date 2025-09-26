@@ -104,9 +104,6 @@ def init_pusher():
         logger.error(f"Failed to initialize Pusher client: {e}")
         return False
 
-# HTTP client for Soketi requests
-http_client = httpx.AsyncClient()
-
 # Constants for retry logic
 MAX_RETRY_ATTEMPTS = 3
 RETRY_DELAY = 1  # seconds
@@ -579,7 +576,7 @@ async def health_check():
     
     return status
 
-# Start the Soketi client when the app starts
+# Initialize services when the app starts
 @app.on_event("startup")
 async def startup_event():
     # Initialize Redis with retry logic
