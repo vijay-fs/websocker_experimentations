@@ -607,7 +607,7 @@ async def startup_event():
     # Initialize Pusher client
     pusher_initialized = init_pusher()
     if not pusher_initialized:
-        logger.warning("Pusher client initialization failed. Real-time features may not work.")
+        logger.warning("Pusher  client initialization failed. Real-time features may not work. ")
     
     # Start Redis Pub/Sub listener in the background
     asyncio.create_task(start_redis_listener())
