@@ -48,7 +48,7 @@ async def add_cors_headers(request, call_next):
 redis_client = None
 rq_queue = None
 
-# Initialize EasyOCR reader (supports multiple languages)
+# Initialize EasyOCR reader (supports  multiple  languages)
 reader = easyocr.Reader(['en'])
 
 # Get Redis host from environment or use 'redis' as default
