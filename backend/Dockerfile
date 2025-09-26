@@ -33,8 +33,6 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip uninstall -y torch torchvision \
     && pip install --no-cache-dir torch==2.0.1+cpu torchvision==0.15.2+cpu -f https://download.pytorch.org/whl/torch_stable.html
 
-# Download EasyOCR models during build
-RUN python -c "import easyocr; easyocr.Reader(['en'])"
 
 # Copy application code
 COPY . .
