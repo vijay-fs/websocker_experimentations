@@ -6,25 +6,22 @@ from functools import wraps
 import json
 import os
 from datetime import timedelta
-from rq import Queue
-from rq.job import Job
 from typing import Optional, Any, Dict, Callable, Union
 
 # Initialize Redis connection
 redis_client = None
 redis_async_client = None
-job_queue = None
 
 def init_redis():
-    """Initialize Redis connections and queue."""
-    global redis_client, redis_async_client, job_queue
+    """Initialize Redis connections for pub/sub and caching."""
+    global redis_client, redis_async_client
     
     # Use service name 'redis' in Docker Compose network
     redis_url = os.getenv('REDIS_URL', 'redis://redis:6379/0')
     logger = logging.getLogger(__name__)
     logger.info(f"Connecting to Redis at {redis_url}")
     
-    # Sync client for RQ
+    # Sync client for pub/sub and caching
     redis_client = redis.Redis.from_url(
         redis_url,
         decode_responses=True,
@@ -39,9 +36,6 @@ def init_redis():
         socket_connect_timeout=5,
         socket_keepalive=True
     )
-    
-    # Initialize RQ queue with 'default' name to match entrypoint.sh
-    job_queue = Queue('default', connection=redis_client, default_timeout=3600)
 
 def get_redis() -> redis.Redis:
     """Get Redis client instance."""
@@ -55,57 +49,27 @@ def get_async_redis() -> redis_async.Redis:
         init_redis()
     return redis_async_client
 
-def get_queue() -> Queue:
-    """Get RQ queue instance."""
-    if job_queue is None:
-        init_redis()
-    return job_queue
-
-# Feature 1: Job Queue with RQ
-def enqueue_job(
-    func: Callable,
-    *args,
-    job_id: Optional[str] = None,
-    **kwargs
-) -> Job:
-    """
-    Enqueue a job to be processed by the worker.
-    
-    Args:
-        func: The function to execute
-        job_id: Optional job ID
-        *args, **kwargs: Arguments to pass to the function
-        
-    Returns:
-        Job: The RQ job instance
-    """
-    return job_queue.enqueue(
-        func,
-        args=args,
-        kwargs=kwargs,
-        job_id=job_id,
-        result_ttl=86400,  # Keep results for 24 hours
-        failure_ttl=86400  # Keep failed jobs for 24 hours
-    )
-
-def get_job(job_id: str) -> Optional[Dict[str, Any]]:
-    """Get job status and result by ID."""
+# Celery task management functions
+def get_celery_task_status(task_id: str) -> Optional[Dict[str, Any]]:
+    """Get Celery task status and result by ID."""
     try:
-        job = Job.fetch(job_id, connection=redis_client)
+        from .celery_app import celery_app
+        result = celery_app.AsyncResult(task_id)
+        
         return {
-            'id': job.id,
-            'status': job.get_status(),
-            'result': job.result,
-            'error': job.exc_info,
-            'created_at': job.created_at.isoformat() if job.created_at else None,
-            'enqueued_at': job.enqueued_at.isoformat() if job.enqueued_at else None,
-            'started_at': job.started_at.isoformat() if job.started_at else None,
-            'ended_at': job.ended_at.isoformat() if job.ended_at else None,
+            'id': task_id,
+            'status': result.status,
+            'result': result.result if result.successful() else None,
+            'error': str(result.info) if result.failed() else None,
+            'state': result.state,
+            'info': result.info
         }
     except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error getting task status: {e}")
         return None
 
-# Feature 2: Caching Layer
+# Caching Layer
 def cache_result(key: str, value: Any, ttl: int = 3600) -> bool:
     """Cache a value in Redis with TTL."""
     try:
@@ -142,7 +106,7 @@ def invalidate_cache(key: str) -> bool:
     except RedisError:
         return False
 
-# Feature 3: Pub/Sub for Real-time Updates
+# Pub/Sub for Real-time Updates
 def publish_message(channel: str, message: Dict[str, Any]) -> bool:
     """Publish a message to a Redis channel synchronously."""
     try:

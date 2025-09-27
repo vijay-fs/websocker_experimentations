@@ -34,7 +34,6 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_URL=redis://redis:6379/0
-      - RQ_REDIS_URL=redis://redis:6379/0
     depends_on:
       redis:
         condition: service_healthy
@@ -73,23 +72,48 @@ services:
       - ocr-network
     restart: unless-stopped
 
-  # RQ Worker service
+  # Celery Worker service
   worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: ocr-worker
-    command: ["worker"]
+    container_name: ocr-celery-worker
+    command: ["celery-worker"]
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_URL=redis://redis:6379/0
-      - RQ_REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
       redis:
         condition: service_healthy
       backend:
         condition: service_started
+    networks:
+      - ocr-network
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
+  # Celery Flower monitoring (optional)
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ocr-celery-flower
+    command: ["celery", "-A", "app.celery_app", "flower", "--port=5555"]
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - ocr-network
     restart: unless-stopped

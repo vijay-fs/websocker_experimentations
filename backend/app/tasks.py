@@ -9,6 +9,7 @@ import easyocr
 from io import BytesIO
 import base64
 
+from .celery_app import celery_app
 from .redis_utils import get_redis, publish_message
 
 # Configure logging
@@ -17,9 +18,11 @@ logger = logging.getLogger(__name__)
 # Initialize EasyOCR reader (supports multiple languages)
 reader = easyocr.Reader(['en'])
 
+@celery_app.task(bind=True, name='app.tasks.process_engineering_drawing_task')
 def process_engineering_drawing_task(
-    batch_id: str, 
+    self,
     image_data_base64: str, 
+    batch_id: str,
     process_type: str = "default",
     parameters: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
@@ -28,8 +31,21 @@ def process_engineering_drawing_task(
     This function runs in a background worker.
     """
     try:
-        # Update status to processing
+        # Update task state and publish progress
         logger.info(f"Starting OCR processing for batch {batch_id}")
+        
+        # Update Celery task state
+        self.update_state(
+            state='PROGRESS',
+            meta={
+                'current': 10,
+                'total': 100,
+                'status': 'Starting image processing...',
+                'batch_id': batch_id
+            }
+        )
+        
+        # Publish to Redis pub/sub for real-time updates
         status_update = {
             "status": "processing",
             "progress": 10,
@@ -52,6 +68,18 @@ def process_engineering_drawing_task(
 
         # Update status
         logger.info(f"Starting OCR detection for batch {batch_id}")
+        
+        # Update Celery task state
+        self.update_state(
+            state='PROGRESS',
+            meta={
+                'current': 30,
+                'total': 100,
+                'status': 'Performing OCR on the image...',
+                'batch_id': batch_id
+            }
+        )
+        
         publish_message("jobs:update", {
             "batch_id": batch_id,
             "status": "processing",
@@ -129,6 +157,18 @@ def process_engineering_drawing_task(
                 }
             }
             
+            # Update Celery task state to SUCCESS
+            self.update_state(
+                state='SUCCESS',
+                meta={
+                    'current': 100,
+                    'total': 100,
+                    'status': 'Processing completed successfully',
+                    'batch_id': batch_id,
+                    'result': result_without_image
+                }
+            )
+            
             publish_message("jobs:update", {
                 "batch_id": batch_id,
                 "status": "completed",
@@ -148,6 +188,18 @@ def process_engineering_drawing_task(
             error_msg = f"Error during OCR processing: {str(e)}"
             logger.error(error_msg, exc_info=True)
             
+            # Update Celery task state to FAILURE
+            self.update_state(
+                state='FAILURE',
+                meta={
+                    'current': 0,
+                    'total': 100,
+                    'status': f'Processing failed: {str(e)}',
+                    'batch_id': batch_id,
+                    'error': str(e)
+                }
+            )
+            
             # Send error status
             publish_message("jobs:update", {
                 "batch_id": batch_id,
@@ -161,6 +213,18 @@ def process_engineering_drawing_task(
             
     except Exception as e:
         logger.error(f"Unexpected error in process_engineering_drawing_task: {str(e)}", exc_info=True)
+        
+        # Update Celery task state to FAILURE for unexpected errors
+        self.update_state(
+            state='FAILURE',
+            meta={
+                'current': 0,
+                'total': 100,
+                'status': f'Unexpected error: {str(e)}',
+                'batch_id': batch_id,
+                'error': str(e)
+            }
+        )
         
         # Ensure we send a failure message even for unexpected errors
         publish_message("jobs:update", {

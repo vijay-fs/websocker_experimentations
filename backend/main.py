@@ -12,15 +12,15 @@ from io import BytesIO
 import pusher
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from rq import Queue
 import easyocr
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-from app.redis_utils import get_redis, get_async_redis, get_queue, enqueue_job, get_job, cache_result, cache_result_async, get_cached_result, publish_message, publish_message_async, init_redis
+from app.redis_utils import get_redis, get_async_redis, get_celery_task_status, cache_result, cache_result_async, get_cached_result, publish_message, publish_message_async, init_redis
 from app.tasks import process_engineering_drawing_task
+from app.celery_app import celery_app
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -44,9 +44,8 @@ async def add_cors_headers(request, call_next):
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response
 
-# Initialize Redis and RQ queue
+# Initialize Redis
 redis_client = None
-rq_queue = None
 
 # Initialize EasyOCR reader (supports  multiple  languages)
 reader = easyocr.Reader(['en'])
@@ -56,16 +55,12 @@ REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
 REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
 os.environ['REDIS_URL'] = REDIS_URL
-os.environ['RQ_REDIS_URL'] = REDIS_URL
-
 # Load environment variables
 load_dotenv()
 
 # Set Redis URL if not already set in environment
 if 'REDIS_URL' not in os.environ:
     os.environ['REDIS_URL'] = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
-if 'RQ_REDIS_URL' not in os.environ:
-    os.environ['RQ_REDIS_URL'] = os.environ['REDIS_URL']
 
 # Get Pusher configuration from environment variables
 PUSHER_APP_ID = os.getenv("PUSHER_APP_ID", "")
@@ -138,16 +133,16 @@ class BatchStatusResponse(BaseModel):
     error: Optional[str] = None
 
 async def get_batch_status(batch_id: str):
-    """Get batch status from Redis cache"""
+    """Get batch status from Redis cache or Celery"""
     # First check if we have a cached result
     cached_status = get_cached_result(f"batch_status:{batch_id}")
     if cached_status:
         return cached_status
     
-    # Check if it's an RQ job
-    job_data = get_job(batch_id)
-    if job_data:
-        return job_data
+    # Check if it's a Celery task
+    task_data = get_celery_task_status(batch_id)
+    if task_data:
+        return task_data
     
     return {"status": "not_found", "message": "Batch ID not found"}
 
@@ -375,14 +370,12 @@ async def start_process(
         background_tasks.add_task(simulate_long_process, batch_id)
     # For background processing (asynchronous)
     else:
-        # Enqueue the job with RQ
-        job = enqueue_job(
-            process_engineering_drawing_task,
-            batch_id=batch_id,
+        # Enqueue the task with Celery
+        task = process_engineering_drawing_task.delay(
             image_data_base64=request.parameters.get("image_data"),
+            batch_id=batch_id,
             process_type=request.process_type,
-            parameters=request.parameters,
-            job_id=batch_id
+            parameters=request.parameters
         )
         
         # Publish an event that a new job was queued
@@ -392,8 +385,8 @@ async def start_process(
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        # Return initial response
-        return {"batch_id": batch_id, "status": "queued"}
+        # Return initial response with task ID
+        return {"batch_id": batch_id, "task_id": task.id, "status": "queued"}
 
 @app.get("/api/batch-status/{batch_id}")
 async def get_batch_status_endpoint(batch_id: str):
@@ -471,19 +464,17 @@ async def upload_drawing(
         # Convert image to base64 for the task
         image_base64 = base64.b64encode(image_data).decode('utf-8')
         
-        # Enqueue the job with RQ
-        job = enqueue_job(
-            process_engineering_drawing_task,
-            batch_id=batch_id,
+        # Enqueue the task with Celery
+        task = process_engineering_drawing_task.delay(
             image_data_base64=image_base64,
+            batch_id=batch_id,
             process_type="engineering_drawing",
             parameters={
                 "file_name": file.filename,
                 "file_size": len(image_data),
                 "content_type": file.content_type,
                 "image_hash": image_hash
-            },
-            job_id=batch_id
+            }
         )
         
         # Publish an event that a new job was queued
@@ -496,6 +487,7 @@ async def upload_drawing(
         # Return initial response
         return {
             "batch_id": batch_id,
+            "task_id": task.id,
             "status": "queued",
             "message": "File uploaded and queued for processing"
         }
@@ -547,13 +539,16 @@ async def health_check():
     except Exception as e:
         status["details"]["redis_error"] = str(e)
     
-    # Check RQ connection
+    # Check Celery connection
     try:
-        rq_ok = get_queue().connection.ping()
-        status["services"]["rq"] = rq_ok
-        status["details"]["rq"] = "Connected" if rq_ok else "Connection failed"
+        # Test Celery by checking if we can inspect active tasks
+        inspect = celery_app.control.inspect()
+        active_tasks = inspect.active()
+        celery_ok = active_tasks is not None
+        status["services"]["celery"] = celery_ok
+        status["details"]["celery"] = "Connected" if celery_ok else "Connection failed"
     except Exception as e:
-        status["details"]["rq_error"] = str(e)
+        status["details"]["celery_error"] = str(e)
     # Check Pusher connection
     try:
         if pusher_client:
@@ -589,12 +584,8 @@ async def startup_event():
             redis = get_redis()
             redis.ping()
             
-            # Initialize RQ queue
-            global rq_queue
-            rq_queue = get_queue()
-            
             logger.info(f"Successfully connected to Redis at {REDIS_URL}")
-            logger.info("RQ queue initialized successfully")
+            logger.info("Redis connection established successfully")
             break
         except Exception as e:
             if attempt == max_retries - 1:
