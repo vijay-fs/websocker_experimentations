@@ -406,6 +406,21 @@ async def get_batch_status_endpoint(batch_id: str):
         logger.error(f"Error getting batch status: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@app.get("/api/batch-result/{batch_id}")
+async def get_batch_result_with_image(batch_id: str):
+    """Get the full batch result including the annotated image"""
+    try:
+        cached_result = get_cached_result(f"batch_result:{batch_id}")
+        if cached_result:
+            return cached_result
+        else:
+            raise HTTPException(status_code=404, detail="Batch result not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting batch result: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @app.post("/api/upload")
 async def upload_drawing(
     file: UploadFile = File(...),

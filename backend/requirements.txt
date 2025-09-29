@@ -12,7 +12,6 @@ pydantic==2.4.2
 python-dotenv==1.0.0
 redis==5.0.1
 celery==5.3.4
-flower==2.0.1
 python-redis-cache==4.0.2
 pusher==3.3.2
 --extra-index-url https://download.pytorch.org/whl/cpu

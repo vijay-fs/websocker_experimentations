@@ -140,6 +140,27 @@ export const useSocket = (): UsePusherReturn => {
           newMap.set(batchProgress.batchId, batchProgress);
           return newMap;
         });
+
+        // Fetch full result with image when progress reaches 100%
+        if (updateData.progress === 100 && updateData.status === 'completed') {
+          // Fetch the full result with image from the API
+          fetch(`/api/batch-result/${updateData.batch_id}`)
+            .then(response => response.json())
+            .then(fullResult => {
+              const updatedProgress = {
+                ...batchProgress,
+                result: fullResult
+              };
+              setBatchProgressMap(prev => {
+                const newMap = new Map(prev);
+                newMap.set(updatedProgress.batchId, updatedProgress);
+                return newMap;
+              });
+            })
+            .catch(error => {
+              console.error('Failed to fetch full result:', error);
+            });
+        }
       });
       
       channel.bind('pusher:subscription_error', (error: any) => {

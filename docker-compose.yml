@@ -91,27 +91,6 @@ services:
     deploy:
       replicas: 2
 
-  # Celery Flower monitoring (optional)
-  flower:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: ocr-celery-flower
-    command: ["python", "flower_start.py"]
-    ports:
-      - "5555:5555"
-    env_file:
-      - .env
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - ocr-network
-    restart: unless-stopped
 
 volumes:
   redis_data:
