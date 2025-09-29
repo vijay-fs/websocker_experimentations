@@ -10,10 +10,17 @@ done
 # Run the application
 if [ "$1" = "celery-worker" ]; then
     echo "Starting Celery worker..."
-    exec celery -A app.celery_app worker --loglevel=info --concurrency=2
+    CONCURRENCY=${CELERY_WORKER_CONCURRENCY:-2}
+    LOGLEVEL=${LOG_LEVEL:-info}
+    exec celery -A app.celery_app worker --loglevel=$LOGLEVEL --concurrency=$CONCURRENCY
 elif [ "$1" = "worker" ]; then
     echo "Starting Celery worker (legacy command)..."
-    exec celery -A app.celery_app worker --loglevel=info --concurrency=2
+    CONCURRENCY=${CELERY_WORKER_CONCURRENCY:-2}
+    LOGLEVEL=${LOG_LEVEL:-info}
+    exec celery -A app.celery_app worker --loglevel=$LOGLEVEL --concurrency=$CONCURRENCY
+elif [ "$1" = "flower_start.py" ] || [ "$2" = "flower_start.py" ]; then
+    echo "Starting Flower monitoring..."
+    exec python flower_start.py
 else
     echo "Starting FastAPI server..."
     exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload

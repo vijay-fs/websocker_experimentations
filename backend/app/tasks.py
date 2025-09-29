@@ -15,8 +15,26 @@ from .redis_utils import get_redis, publish_message
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Initialize EasyOCR reader (supports multiple languages)
-reader = easyocr.Reader(['en'])
+# Reduce the number of threads used by math libs to avoid potential deadlocks
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
+# Lazily initialized EasyOCR reader to avoid heavy init at import time in prefork workers
+_reader = None
+
+def get_reader():
+    """Return a singleton EasyOCR reader instance (CPU-only)."""
+    global _reader
+    if _reader is None:
+        logger.info("Initializing EasyOCR reader (CPU, en)...")
+        # Ensure model directory exists and is writable
+        model_dir = os.path.expanduser("~/.EasyOCR")
+        os.makedirs(os.path.join(model_dir, "model"), exist_ok=True)
+        # Force CPU and explicit model dir to prevent unexpected downloads/permissions issues
+        _reader = easyocr.Reader(['en'], gpu=False, model_storage_directory=model_dir, download_enabled=True, verbose=False)
+    return _reader
 
 @celery_app.task(bind=True, name='app.tasks.process_engineering_drawing_task')
 def process_engineering_drawing_task(
@@ -90,8 +108,64 @@ def process_engineering_drawing_task(
 
         # Perform OCR
         try:
-            # Use EasyOCR to detect text
-            results = reader.readtext(image_np)
+            # Initialize OCR reader
+            self.update_state(
+                state='PROGRESS',
+                meta={
+                    'current': 40,
+                    'total': 100,
+                    'status': 'Initializing OCR engine...',
+                    'batch_id': batch_id
+                }
+            )
+            publish_message("jobs:update", {
+                "batch_id": batch_id,
+                "status": "processing",
+                "progress": 40,
+                "message": "Initializing OCR engine...",
+                "message_type": "info"
+            })
+            
+            ocr_reader = get_reader()
+            
+            # Start text detection
+            self.update_state(
+                state='PROGRESS',
+                meta={
+                    'current': 50,
+                    'total': 100,
+                    'status': 'Detecting text regions...',
+                    'batch_id': batch_id
+                }
+            )
+            publish_message("jobs:update", {
+                "batch_id": batch_id,
+                "status": "processing",
+                "progress": 50,
+                "message": "Detecting text regions...",
+                "message_type": "info"
+            })
+            
+            logger.info("Running EasyOCR readtext() ...")
+            results = ocr_reader.readtext(image_np)
+            
+            # Process OCR results
+            self.update_state(
+                state='PROGRESS',
+                meta={
+                    'current': 70,
+                    'total': 100,
+                    'status': 'Processing detected text...',
+                    'batch_id': batch_id
+                }
+            )
+            publish_message("jobs:update", {
+                "batch_id": batch_id,
+                "status": "processing",
+                "progress": 70,
+                "message": "Processing detected text...",
+                "message_type": "info"
+            })
             
             # Extract text and bounding boxes
             detected_texts = []
@@ -104,6 +178,24 @@ def process_engineering_drawing_task(
                         "confidence": float(prob),
                         "bounding_box": bbox_list
                     })
+            
+            # Generate visualization
+            self.update_state(
+                state='PROGRESS',
+                meta={
+                    'current': 85,
+                    'total': 100,
+                    'status': 'Creating annotated image...',
+                    'batch_id': batch_id
+                }
+            )
+            publish_message("jobs:update", {
+                "batch_id": batch_id,
+                "status": "processing",
+                "progress": 85,
+                "message": "Creating annotated image...",
+                "message_type": "info"
+            })
             
             # Mark the image with bounding boxes (for visualization)
             marked_image = image.copy()

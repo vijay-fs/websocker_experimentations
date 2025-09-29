@@ -8,8 +8,8 @@ class CeleryConfig:
     """Celery configuration class."""
     
     # Broker settings
-    broker_url = os.getenv('REDIS_URL', 'redis://redis:6379/0')
-    result_backend = os.getenv('REDIS_URL', 'redis://redis:6379/0')
+    broker_url = os.getenv('CELERY_BROKER_URL', os.getenv('REDIS_URL', 'redis://redis:6379/0'))
+    result_backend = os.getenv('CELERY_RESULT_BACKEND', os.getenv('REDIS_URL', 'redis://redis:6379/0'))
     
     # Task settings
     task_serializer = 'json'
@@ -25,9 +25,10 @@ class CeleryConfig:
     task_store_eager_result = True
     
     # Worker settings
-    worker_prefetch_multiplier = 1
-    worker_max_tasks_per_child = 1000
+    worker_prefetch_multiplier = int(os.getenv('CELERY_WORKER_PREFETCH_MULTIPLIER', '1'))
+    worker_max_tasks_per_child = int(os.getenv('CELERY_WORKER_MAX_TASKS_PER_CHILD', '1000'))
     worker_disable_rate_limits = True
+    worker_concurrency = int(os.getenv('CELERY_WORKER_CONCURRENCY', '2'))
     
     # Task routing
     task_routes = {
@@ -41,7 +42,7 @@ class CeleryConfig:
     )
     
     # Result backend settings
-    result_expires = 3600  # 1 hour
+    result_expires = int(os.getenv('TASK_RESULT_TTL', '3600'))  # 1 hour default
     result_persistent = True
     
     # Task result settings

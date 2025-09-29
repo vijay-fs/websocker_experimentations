@@ -55,8 +55,9 @@ REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
 REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
 os.environ['REDIS_URL'] = REDIS_URL
-# Load environment variables
-load_dotenv()
+# Load environment variables only if not in Docker
+if not os.getenv('DOCKER_ENV'):
+    load_dotenv()
 
 # Set Redis URL if not already set in environment
 if 'REDIS_URL' not in os.environ:

@@ -44,7 +44,15 @@ RUN chmod +x /app/entrypoint.sh
 
 # Create a non-root user and switch to it
 RUN useradd -m appuser && chown -R appuser:appuser /app
+
+# Create EasyOCR model directory with proper permissions
+RUN mkdir -p /home/appuser/.EasyOCR/model && \
+    chown -R appuser:appuser /home/appuser/.EasyOCR
+
 USER appuser
+
+# Pre-download EasyOCR models to avoid runtime download issues
+RUN python -c "import easyocr; reader = easyocr.Reader(['en'], gpu=False, download_enabled=True)" || true
 
 # Set environment variables with safe defaults
 ENV PYTHONUNBUFFERED=1 \

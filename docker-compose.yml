@@ -25,12 +25,10 @@ services:
     container_name: ocr-backend
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
-      - PUSHER_APP_ID=${PUSHER_APP_ID}
-      - PUSHER_APP_KEY=${PUSHER_APP_KEY}
-      - PUSHER_APP_SECRET=${PUSHER_APP_SECRET}
-      - PUSHER_CLUSTER=${PUSHER_CLUSTER:-us2}
-      - PUSHER_USE_TLS=${PUSHER_USE_TLS:-true}
+      - DOCKER_ENV=true
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_URL=redis://redis:6379/0
@@ -53,18 +51,16 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_URL=http://localhost:8000
         - NEXT_PUBLIC_PUSHER_APP_KEY=${NEXT_PUBLIC_PUSHER_APP_KEY}
         - NEXT_PUBLIC_PUSHER_CLUSTER=${NEXT_PUBLIC_PUSHER_CLUSTER:-ap2}
         - NEXT_PUBLIC_PUSHER_USE_TLS=${NEXT_PUBLIC_PUSHER_USE_TLS:-true}
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     container_name: ocr-frontend
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - NEXT_PUBLIC_PUSHER_APP_KEY=${NEXT_PUBLIC_PUSHER_APP_KEY}
-      - NEXT_PUBLIC_PUSHER_CLUSTER=${NEXT_PUBLIC_PUSHER_CLUSTER:-ap2}
-      - NEXT_PUBLIC_PUSHER_USE_TLS=${NEXT_PUBLIC_PUSHER_USE_TLS:-true}
       - DOCKER_ENV=true
     depends_on:
       - backend
@@ -77,14 +73,13 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: ocr-celery-worker
     command: ["celery-worker"]
+    env_file:
+      - .env
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
       redis:
         condition: service_healthy
@@ -102,15 +97,15 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: ocr-celery-flower
-    command: ["celery", "-A", "app.celery_app", "flower", "--port=5555"]
+    command: ["python", "flower_start.py"]
     ports:
       - "5555:5555"
+    env_file:
+      - .env
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
       redis:
         condition: service_healthy

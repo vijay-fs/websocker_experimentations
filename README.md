@@ -31,7 +31,7 @@ Frontend (Next.js) ←→ Pusher WebSocket Service ←→ Backend (FastAPI)
                                 ↓                        ↓
                         Real-time Progress Updates    Redis Queue
                                 ↓                        ↓
-                        EasyOCR Processing Engine ←→ RQ Worker
+                        EasyOCR Processing Engine ←→ Celery Worker
 ```
 
 ## 🛠️ Tech Stack
@@ -42,7 +42,7 @@ Frontend (Next.js) ←→ Pusher WebSocket Service ←→ Backend (FastAPI)
 - **Pillow (PIL)**: Image processing and manipulation
 - **Pusher**: Real-time WebSocket communication service
 - **Redis**: Message queuing and caching
-- **RQ**: Background job processing
+- **Celery**: Distributed task queue for background job processing
 
 ### Frontend
 - **Next.js 15**: React framework with TypeScript
