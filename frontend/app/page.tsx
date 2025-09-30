@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSocket } from '@/hooks/useSocket';
 import Image from 'next/image';
+import { trackUploadStarted, trackUploadCompleted, trackUploadFailed, trackResultsExpanded, trackFullSizeImageOpened } from '@/utils/analytics';
 
 interface ToastProps {
   message: string;
@@ -145,6 +146,11 @@ export default function Home() {
   const handleUploadButtonClick = async () => {
     if (!selectedFile) return;
 
+    const uploadStartTime = Date.now();
+    
+    // Track upload started
+    trackUploadStarted(selectedFile.name, selectedFile.size, selectedFile.type);
+
     try {
       setUploadStatus('Uploading file...');
       
@@ -161,6 +167,11 @@ export default function Home() {
       }
 
       const data = await response.json();
+      const uploadTime = Date.now() - uploadStartTime;
+      
+      // Track upload completed
+      trackUploadCompleted(data.batch_id, selectedFile.name, uploadTime);
+      
       setUploadStatus(`File uploaded successfully. Processing started with batch ID: ${data.batch_id}`);
       
       // Subscribe immediately
@@ -189,6 +200,10 @@ export default function Home() {
       setSelectedFile(null);
     } catch (error) {
       console.error('Error uploading file:', error);
+      
+      // Track upload failed
+      trackUploadFailed(selectedFile.name, error instanceof Error ? error.message : 'Unknown error');
+      
       setUploadStatus('Error uploading file');
     }
   };

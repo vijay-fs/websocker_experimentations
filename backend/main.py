@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from app.redis_utils import get_redis, get_async_redis, get_celery_task_status, cache_result, cache_result_async, get_cached_result, publish_message, publish_message_async, init_redis
 from app.tasks import process_engineering_drawing_task
 from app.celery_app import celery_app
+from app.analytics import init_posthog, track_upload, track_task_queued, track_api_error, track_pusher_event, shutdown_posthog
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -46,6 +47,9 @@ async def add_cors_headers(request, call_next):
 
 # Initialize Redis
 redis_client = None
+
+# Initialize PostHog Analytics
+init_posthog()
 
 # Initialize EasyOCR reader (supports  multiple  languages)
 reader = easyocr.Reader(['en'])
@@ -223,13 +227,18 @@ async def send_to_pusher(batch_id: str, message: str, progress: int, result: Opt
         # Pusher Python client returns {} on success, or raises exception on failure
         if response == {} or response is None:
             logger.info(f"✅ Pusher: batch {batch_id} sent successfully")
+            # Track successful Pusher event
+            track_pusher_event(batch_id=batch_id, event_type=message_type, success=True)
             return True
         else:
             logger.warning(f"⚠️ Pusher returned unexpected response: {response}")
+            track_pusher_event(batch_id=batch_id, event_type=message_type, success=True)
             return True  # Still consider it successful unless there's an exception
             
     except Exception as e:
         logger.error(f"Critical error in send_to_pusher for batch {batch_id}: {e}")
+        # Track failed Pusher event
+        track_pusher_event(batch_id=batch_id, event_type=message_type, success=False)
         # Update batch status with error
         batch_data = await get_batch_status(batch_id)
         if batch_data:
@@ -476,6 +485,13 @@ async def upload_drawing(
     # Save initial status
     await set_batch_status(batch_id, status_data)
     
+    # Track upload event in PostHog
+    track_upload(
+        batch_id=batch_id,
+        file_size=len(image_data),
+        file_type=file.content_type or "unknown"
+    )
+    
     try:
         # Convert image to base64 for the task
         image_base64 = base64.b64encode(image_data).decode('utf-8')
@@ -492,6 +508,9 @@ async def upload_drawing(
                 "image_hash": image_hash
             }
         )
+        
+        # Track task queued event
+        track_task_queued(batch_id=batch_id, task_id=task.id)
         
         # Publish an event that a new job was queued
         await publish_message_async("jobs:new", {
