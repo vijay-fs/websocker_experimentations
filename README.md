@@ -29,10 +29,20 @@ A containerized full-stack application for processing engineering drawings with 
 ```
 Frontend (Next.js) ←→ Pusher WebSocket Service ←→ Backend (FastAPI)
                                 ↓                        ↓
-                        Real-time Progress Updates    Redis Queue
+                        Real-time Progress Updates   Celery Task Queue
                                 ↓                        ↓
-                        EasyOCR Processing Engine ←→ Celery Worker
+                        EasyOCR Processing Engine ←→ Celery Workers (x2)
+                                                         ↓
+                                                    Redis Backend
 ```
+
+### Data Flow
+
+1. **Upload Phase**: User uploads image → FastAPI receives file → Celery task queued
+2. **Processing Phase**: Celery worker picks up task → EasyOCR processes image → Progress published to Redis Pub/Sub
+3. **Real-time Updates**: Backend Redis listener → Forwards to Pusher → Frontend receives updates
+4. **Result Delivery**: Full result with annotated image cached in Redis → Frontend fetches via API
+5. **Image Display**: Frontend automatically fetches cached result when progress reaches 100%
 
 ## 🛠️ Tech Stack
 
@@ -94,49 +104,60 @@ docker compose up --build -d
 - **Backend API**: http://localhost:8000
 - **API Documentation**: http://localhost:8000/docs
 
-## 🐳 Docker Commands
+## 🐳 Docker Services
 
-### Basic Operations
+### Running Services
+- **backend**: FastAPI application server (port 8000)
+- **frontend**: Next.js application (port 3000)
+- **worker**: Celery workers for OCR processing (2 replicas)
+- **redis**: Redis server for message queue and caching (port 6379)
+
+### Docker Commands
+
+#### Basic Operations
 ```bash
 # Start all services
-docker-compose up
+docker compose up
 
 # Start with rebuild
-docker-compose up --build
+docker compose up --build
 
 # Start in background
-docker-compose up -d
+docker compose up -d
 
 # Stop all services
-docker-compose down
+docker compose down
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # View logs for specific service
-docker-compose logs backend
-docker-compose logs frontend
-docker-compose logs worker
+docker compose logs backend
+docker compose logs frontend
+docker compose logs worker
 
 # Rebuild specific service
-docker-compose build backend
-docker-compose build frontend
+docker compose build backend
+docker compose build frontend
 ```
 
-### Development Commands
+#### Development Commands
 ```bash
 # Start only backend services
-docker-compose up backend worker redis
+docker compose up backend worker redis
 
 # Execute commands in running container
-docker-compose exec backend bash
-docker-compose exec frontend sh
+docker compose exec backend bash
+docker compose exec frontend sh
 
 # Check container status
-docker-compose ps
+docker compose ps
+
+# Scale workers
+docker compose up --scale worker=4
 
 # Remove all containers and volumes
-docker-compose down -v
+docker compose down -v
 ```
 
 ## 📖 Usage
@@ -149,9 +170,11 @@ docker-compose down -v
 
 ## 🔌 API Endpoints
 
-- `POST /api/upload-drawing`: Upload and process engineering drawing
-- `GET /api/batch-status/{batch_id}`: Get processing status
-- `GET /api/health`: Health check endpoint
+- `POST /api/upload`: Upload and process engineering drawing
+- `GET /api/batch-status/{batch_id}`: Get processing status and results
+- `GET /api/batch-result/{batch_id}`: Get full result with annotated image
+- `GET /api/health`: Health check endpoint (includes Redis, Celery, and Pusher status)
+- `POST /api/test-pusher/{batch_id}`: Test Pusher event delivery
 - `GET /docs`: Interactive API documentation (Swagger UI)
 
 ## 📡 WebSocket Events
@@ -181,7 +204,9 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 REDIS_HOST=redis
 REDIS_PORT=6379
 REDIS_URL=redis://redis:6379/0
-RQ_REDIS_URL=redis://redis:6379/0
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/0
+CELERY_WORKER_CONCURRENCY=2
 ```
 
 ## 🏗️ Project Structure
@@ -213,21 +238,39 @@ websocker_experimentations/
 **Container fails to start:**
 ```bash
 # Check logs
-docker-compose logs [service-name]
+docker compose logs [service-name]
 
 # Rebuild containers
-docker-compose down
-docker-compose up --build
+docker compose down
+docker compose up --build
 ```
 
 **Pusher connection issues:**
 - Verify Pusher credentials in `.env` file
 - Check if `NEXT_PUBLIC_` prefixed variables are set for frontend
 - Ensure Pusher cluster is correct
+- Test Pusher connection: `curl http://localhost:8000/api/health`
 
 **Redis connection errors:**
-- Ensure Redis container is running: `docker-compose ps`
-- Check Redis logs: `docker-compose logs redis`
+- Ensure Redis container is running: `docker compose ps`
+- Check Redis logs: `docker compose logs redis`
+- Verify Redis health: `docker compose exec redis redis-cli ping`
+
+**Celery worker issues:**
+- Check worker logs: `docker compose logs worker`
+- Verify workers are active: Check `/api/health` endpoint
+- Restart workers: `docker compose restart worker`
+
+**Image not displaying in frontend:**
+- Check browser console for fetch errors
+- Verify `/api/batch-result/{batch_id}` endpoint returns data
+- Ensure Redis caching is working properly
+- Check that progress reaches 100% before image fetch
+
+**EasyOCR model download issues:**
+- Models are pre-downloaded during Docker build
+- If issues persist, rebuild with: `docker compose build --no-cache backend`
+- Check worker logs for model initialization errors
 
 ## 📄 License
 

@@ -65,7 +65,8 @@ frontend/
 - Pusher client initialization and management
 - Connection status monitoring
 - Batch subscription and event handling
-- Progress state management
+- Progress state management with Map-based storage
+- Automatic image fetching when progress reaches 100%
 - Error handling and reconnection logic
 
 ### Styling (`globals.css` + Tailwind)
@@ -107,11 +108,12 @@ The frontend uses a multi-stage Docker build for optimization:
 ## 🔄 Application Flow
 
 1. **File Selection**: User selects engineering drawing file
-2. **Upload Initiation**: File uploaded to backend API
-3. **WebSocket Connection**: Subscribe to batch-specific channel
-4. **Progress Updates**: Real-time processing status updates
-5. **Result Display**: Show processed images and OCR results
-6. **Full-Size Viewing**: Allow detailed inspection of results
+2. **Upload Initiation**: File uploaded to backend API via `/api/upload`
+3. **WebSocket Connection**: Subscribe to batch-specific Pusher channel (`batch.{batch_id}`)
+4. **Progress Updates**: Real-time processing status updates (10% → 30% → 40% → 50% → 70% → 85% → 100%)
+5. **Image Fetch**: When progress reaches 100%, automatically fetch full result from `/api/batch-result/{batch_id}`
+6. **Result Display**: Show processed images with OCR annotations and statistics
+7. **Full-Size Viewing**: Click images to open in new window for detailed inspection
 
 ## 🎨 UI/UX Features
 
@@ -129,9 +131,10 @@ The frontend uses a multi-stage Docker build for optimization:
 
 ### Results Presentation
 - Expandable result sections
-- Image comparison (original vs processed)
-- OCR text extraction display
-- Processing statistics and metrics
+- Annotated image with bounding boxes and detected text
+- OCR text extraction display with confidence scores
+- Processing statistics (total detections, high confidence count, processing time)
+- Base64 image rendering with Next.js Image component
 
 ### Notifications
 - Toast notifications for user feedback
@@ -155,9 +158,11 @@ The frontend uses a multi-stage Docker build for optimization:
 
 ### Performance Optimization
 - Next.js automatic code splitting
-- Image optimization
+- Image optimization with Next.js Image component
 - Lazy loading for components
-- Efficient state management
+- Efficient state management with React hooks
+- Two-phase data loading (progress via WebSocket, image via API)
+- Map-based batch progress tracking for O(1) lookups
 
 ## 🚀 Build & Deployment
 
